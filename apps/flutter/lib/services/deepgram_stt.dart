@@ -33,20 +33,17 @@ class DeepgramStt {
     _setState(SttState.connecting);
 
     try {
-      final uri = Uri.parse(AppConfig.deepgramWsUrl);
-      _channel = WebSocketChannel.connect(
-        uri,
-        protocols: [],
-      );
-
-      // Deepgram requires the auth in the URL or as a header.
-      // web_socket_channel doesn't support custom headers on all platforms,
-      // so we use the token query param approach.
-      // Reconnect with token in URL:
+      // Auth via query param (works on all platforms including web)
       final authedUri = Uri.parse(
         '${AppConfig.deepgramWsUrl}&token=${AppConfig.deepgramApiKey}',
       );
       _channel = WebSocketChannel.connect(authedUri);
+
+      // Wait briefly for the connection to establish
+      await _channel!.ready.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw Exception('Deepgram connection timed out'),
+      );
 
       _channel!.stream.listen(
         _onMessage,

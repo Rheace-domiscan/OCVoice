@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../services/deepgram_stt.dart';
@@ -105,6 +106,15 @@ class _VoiceScreenState extends State<VoiceScreen>
   }
 
   Future<void> _startSession() async {
+    // Web browser can't do native mic WebSocket streaming — native app required
+    if (kIsWeb) {
+      setState(() {
+        _voiceState = VoiceState.error;
+        _statusText = 'Voice not supported in browser.\nInstall the native app.';
+      });
+      return;
+    }
+
     setState(() {
       _voiceState = VoiceState.listening;
       _statusText = 'Listening...';
