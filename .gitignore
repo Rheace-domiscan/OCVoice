@@ -1,0 +1,22 @@
+# Environment
+.env
+*.env.local
+
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.iml
+.idea/
+*.log
+
+# macOS
+.DS_Store
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# API Keys — never commit these
+*secrets*
+*keychain*
