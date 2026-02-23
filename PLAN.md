@@ -140,13 +140,24 @@ OCVoice/
 
 **No text input in Sprint 1.**
 
-### Sprint 2 — Polish & Reliability
+### Sprint 2 — Conversation Quality & Reliability
 
-- [ ] Interruption handling (user speaks while assistant talks)
+- [ ] Automatic interruption/barge-in (user speaking stops assistant audio immediately)
+- [ ] Auto-VAD + Push-to-talk mode toggle
 - [ ] Reconnection logic (network drops)
-- [ ] Better VAD tuning
+- [ ] Better endpointing/VAD tuning
+- [ ] Silence-timeout fallback if `speech_final` is delayed/missed
+- [ ] Strict turn-state machine (`Listening -> Thinking -> Speaking -> Listening`) with overlap prevention
+- [ ] Response-status fallback handling (surface why no reply happened)
 - [ ] Onboarding flow (gateway URL + token setup)
 - [ ] App icon + basic branding
+
+### Sprint 2.5 — Diagnostics & Operational UX
+
+- [ ] In-app service health checks (Gateway/STT/TTS reachability)
+- [ ] Debug diagnostics panel (speech started/stopped, response lifecycle, errors)
+- [ ] Mic/speaker test utility (quick audio path validation)
+- [ ] Structured OpenClaw voice action contract with input validation + clear fallback errors
 
 ### Sprint 3 — Distribution
 
