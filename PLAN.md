@@ -183,7 +183,7 @@ OCVoice/
 - **ChatGPT-level voice UX target**
   - Continuous conversation feel
   - Fast turn-taking
-  - Natural interruption handling (barge-in)
+  - **Automatic interruption (barge-in) enabled by default**
   - Minimal user friction
 
 ## Key Decisions Made
