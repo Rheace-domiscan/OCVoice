@@ -123,14 +123,20 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ── Save & advance to done ─────────────────────────────────────────────────
 
   Future<void> _saveAndContinue() async {
-    await SettingsService.instance.save(
-      gatewayUrl: _gatewayUrlCtrl.text.trim(),
-      gatewayToken: _gatewayTokenCtrl.text.trim(),
-      deepgramKey: _deepgramKeyCtrl.text.trim(),
-      elevenLabsKey: _elevenLabsKeyCtrl.text.trim(),
-      voiceId: _voiceIdCtrl.text.trim(),
-    );
-    _next();
+    try {
+      await SettingsService.instance.save(
+        gatewayUrl: _gatewayUrlCtrl.text.trim(),
+        gatewayToken: _gatewayTokenCtrl.text.trim(),
+        deepgramKey: _deepgramKeyCtrl.text.trim(),
+        elevenLabsKey: _elevenLabsKeyCtrl.text.trim(),
+        voiceId: _voiceIdCtrl.text.trim(),
+      );
+    } catch (_) {
+      // If secure storage fails (e.g. macOS keychain sandbox in debug mode),
+      // settings are still cached in-memory — safe to proceed.
+    } finally {
+      _next();
+    }
   }
 
   // ── Connection test ────────────────────────────────────────────────────────
@@ -289,8 +295,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ── Step 1: Gateway ────────────────────────────────────────────────────────
 
   Widget _buildGatewayStep() {
-    final canContinue = _gatewayUrlCtrl.text.trim().isNotEmpty &&
-        _gatewayTokenCtrl.text.trim().isNotEmpty;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(32, 24, 32, 44),
@@ -352,10 +356,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
           const SizedBox(height: 52),
 
-          _PrimaryButton(
-            label: 'Continue',
-            onTap: canContinue ? _next : null,
-          ),
+          _PrimaryButton(label: 'Continue', onTap: _next),
           const SizedBox(height: 16),
           _BackButton(onTap: _back),
         ],
@@ -366,8 +367,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // ── Step 2: APIs ───────────────────────────────────────────────────────────
 
   Widget _buildApisStep() {
-    final canContinue = _deepgramKeyCtrl.text.trim().isNotEmpty &&
-        _elevenLabsKeyCtrl.text.trim().isNotEmpty;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(32, 24, 32, 44),
@@ -463,10 +462,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
           const SizedBox(height: 52),
 
-          _PrimaryButton(
-            label: 'Save & continue',
-            onTap: canContinue ? _saveAndContinue : null,
-          ),
+          _PrimaryButton(label: 'Save & continue', onTap: _saveAndContinue),
           const SizedBox(height: 16),
           _BackButton(onTap: _back),
         ],

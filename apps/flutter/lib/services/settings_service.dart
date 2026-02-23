@@ -50,17 +50,28 @@ class SettingsService {
 
   // ── Load ──────────────────────────────────────────────────────────────────
   Future<void> load() async {
-    gatewayUrl =
-        await _storage.read(key: _keyGatewayUrl) ?? AppConfig.openclawGatewayUrl;
-    gatewayToken =
-        await _storage.read(key: _keyGatewayToken) ?? AppConfig.openclawGatewayToken;
-    deepgramKey =
-        await _storage.read(key: _keyDeepgramKey) ?? AppConfig.deepgramApiKey;
-    elevenLabsKey =
-        await _storage.read(key: _keyElevenLabsKey) ?? AppConfig.elevenLabsApiKey;
-    voiceId =
-        await _storage.read(key: _keyVoiceId) ?? AppConfig.elevenLabsVoiceId;
-    onboarded = (await _storage.read(key: _keyOnboarded)) == 'true';
+    try {
+      gatewayUrl =
+          await _storage.read(key: _keyGatewayUrl) ?? AppConfig.openclawGatewayUrl;
+      gatewayToken =
+          await _storage.read(key: _keyGatewayToken) ?? AppConfig.openclawGatewayToken;
+      deepgramKey =
+          await _storage.read(key: _keyDeepgramKey) ?? AppConfig.deepgramApiKey;
+      elevenLabsKey =
+          await _storage.read(key: _keyElevenLabsKey) ?? AppConfig.elevenLabsApiKey;
+      voiceId =
+          await _storage.read(key: _keyVoiceId) ?? AppConfig.elevenLabsVoiceId;
+      onboarded = (await _storage.read(key: _keyOnboarded)) == 'true';
+    } catch (_) {
+      // If keychain is unavailable (e.g. first launch before entitlements),
+      // fall back to AppConfig compile-time defaults.
+      gatewayUrl = AppConfig.openclawGatewayUrl;
+      gatewayToken = AppConfig.openclawGatewayToken;
+      deepgramKey = AppConfig.deepgramApiKey;
+      elevenLabsKey = AppConfig.elevenLabsApiKey;
+      voiceId = AppConfig.elevenLabsVoiceId;
+      onboarded = false;
+    }
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────
