@@ -29,6 +29,7 @@ class _VoiceScreenState extends State<VoiceScreen>
   String _statusText = 'Tap to speak';
   String _transcript = '';
   String _lastResponse = '';
+  String _lastHeardTranscript = '';
 
   StreamSubscription<String>? _transcriptSub;
   late AnimationController _pulseController;
@@ -51,12 +52,12 @@ class _VoiceScreenState extends State<VoiceScreen>
   void _listenToStt() {
     _transcriptSub = _stt.transcripts.listen((event) async {
       if (event.startsWith('__SPEECH_FINAL__:')) {
-        // Ignore if we're already thinking/speaking
         if (_processingTurn) return;
 
         final text = event.substring('__SPEECH_FINAL__:'.length).trim();
         if (text.isEmpty) return;
 
+        _lastHeardTranscript = text;
         setState(() {
           _transcript = text;
           _voiceState = VoiceState.thinking;
@@ -64,12 +65,44 @@ class _VoiceScreenState extends State<VoiceScreen>
         });
 
         await _runLlmAndSpeak(text);
-      } else if (!event.startsWith('__')) {
-        // Partial or final transcript (display only, don't process)
+        return;
+      }
+
+      if (event == '__UTTERANCE_END__') {
+        // Fallback path when speech_final is delayed/missing.
         if (_processingTurn) return;
+        final text = _lastHeardTranscript.trim();
+        if (text.isEmpty) return;
+
+        setState(() {
+          _voiceState = VoiceState.thinking;
+          _statusText = 'Thinking...';
+        });
+
+        await _runLlmAndSpeak(text);
+        return;
+      }
+
+      if (!event.startsWith('__')) {
         final clean = event.startsWith('[')
             ? event.substring(1, event.length - 1)
             : event;
+        if (clean.isNotEmpty) {
+          _lastHeardTranscript = clean;
+        }
+
+        // Automatic interruption (barge-in): user speaks while assistant is talking.
+        if (_voiceState == VoiceState.speaking && clean.isNotEmpty) {
+          await _tts.stop();
+          if (mounted) {
+            setState(() {
+              _voiceState = VoiceState.listening;
+              _statusText = 'Listening...';
+            });
+          }
+        }
+
+        if (_processingTurn) return;
         if (mounted) setState(() => _transcript = clean);
       }
     });
@@ -77,6 +110,7 @@ class _VoiceScreenState extends State<VoiceScreen>
 
   Future<void> _runLlmAndSpeak(String userText) async {
     _processingTurn = true;
+    _lastHeardTranscript = '';
 
     try {
       // Buffer full LLM response (streaming)
@@ -141,6 +175,7 @@ class _VoiceScreenState extends State<VoiceScreen>
       _statusText = 'Listening...';
       _transcript = '';
       _lastResponse = '';
+      _lastHeardTranscript = '';
       _processingTurn = false;
     });
 
@@ -163,6 +198,7 @@ class _VoiceScreenState extends State<VoiceScreen>
       _voiceState = VoiceState.idle;
       _statusText = 'Tap to speak';
       _transcript = '';
+      _lastHeardTranscript = '';
     });
   }
 
