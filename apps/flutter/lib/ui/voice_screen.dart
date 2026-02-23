@@ -130,8 +130,13 @@ class _VoiceScreenState extends State<VoiceScreen>
         });
       }
 
-      // Play TTS — mic stays open but _processingTurn blocks overlapping finals
-      await _tts.speak(response);
+      // Mute mic before TTS to prevent echo feedback triggering barge-in
+      _stt.muteMic();
+      try {
+        await _tts.speak(response);
+      } finally {
+        _stt.unmuteMic();
+      }
 
       // Back to listening (mic already running)
       if (mounted && _stt.state == SttState.listening) {

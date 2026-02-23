@@ -30,7 +30,7 @@ class AppConfig {
 
   // ElevenLabs TTS
   static const String elevenLabsApiKey =
-      '545b5d0cfc6ced1ff7d1cd61876173facf40ff3b5f1a48d0a735ea7d8955e97d';
+      'sk_558c7d2b1c3f84ae1ed558455a733d7de39a94e789c73480';
   static const String elevenLabsVoiceId = 'tnSpp4vdxKPjI9w0GnoV'; // Custom voice
   static const String elevenLabsModel = 'eleven_turbo_v2_5';
   static String get elevenLabsTtsUrl =>

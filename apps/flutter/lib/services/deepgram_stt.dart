@@ -66,6 +66,22 @@ class DeepgramStt {
     }
   }
 
+  // When true, audio chunks are NOT forwarded to Deepgram (mic muted during TTS)
+  bool _micMuted = false;
+
+  /// Mute the microphone — mic hardware stays on but audio is not sent to
+  /// Deepgram. Call before TTS playback to prevent echo-triggered barge-in.
+  void muteMic() {
+    _micMuted = true;
+    _finalBuffer.clear(); // discard any partials from before mute
+  }
+
+  /// Unmute the microphone — audio forwarding resumes. Call after TTS ends.
+  void unmuteMic() {
+    _micMuted = false;
+    _finalBuffer.clear(); // discard any echo that slipped through
+  }
+
   Future<void> _startMic() async {
     _recorder = AudioRecorder();
     final hasPermission = await _recorder!.hasPermission();
@@ -80,7 +96,7 @@ class DeepgramStt {
     );
 
     _audioSub = stream.listen((chunk) {
-      _channel?.sink.add(chunk);
+      if (!_micMuted) _channel?.sink.add(chunk);
     });
   }
 
@@ -141,6 +157,7 @@ class DeepgramStt {
   }
 
   Future<void> stop() async {
+    _micMuted = false;
     await _audioSub?.cancel();
     await _recorder?.stop();
     _recorder?.dispose();
