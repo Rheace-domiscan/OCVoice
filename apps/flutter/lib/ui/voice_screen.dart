@@ -22,6 +22,9 @@ class _VoiceScreenState extends State<VoiceScreen>
   final _llm = OpenClawClient();
   final _tts = ElevenLabsTts();
 
+  bool _sessionActive = false;
+  bool _isProcessingTurn = false;
+
   VoiceState _voiceState = VoiceState.idle;
   String _statusText = 'Tap to speak';
   String _transcript = '';
@@ -48,6 +51,7 @@ class _VoiceScreenState extends State<VoiceScreen>
   void _listenToStt() {
     _transcriptSub = _stt.transcripts.listen((event) async {
       if (event.startsWith('__SPEECH_FINAL__:')) {
+        if (!_sessionActive || _isProcessingTurn) return;
         final text = event.substring('__SPEECH_FINAL__:'.length).trim();
         if (text.isEmpty) return;
         setState(() {
@@ -65,7 +69,13 @@ class _VoiceScreenState extends State<VoiceScreen>
   }
 
   Future<void> _runLlmAndSpeak(String userText) async {
+    if (_isProcessingTurn) return;
+    _isProcessingTurn = true;
+
     try {
+      // Pause listening during assistant turn to avoid overlapping turns
+      await _stt.stop();
+
       // Collect full LLM response (streaming into buffer)
       final buffer = StringBuffer();
       await for (final chunk in _llm.chat(userText)) {
@@ -83,17 +93,22 @@ class _VoiceScreenState extends State<VoiceScreen>
 
       await _tts.speak(response);
 
-      // Done — back to listening
-      setState(() {
-        _voiceState = VoiceState.listening;
-        _statusText = 'Listening...';
-        _transcript = '';
-      });
+      // Resume listening for next turn
+      if (_sessionActive) {
+        await _stt.start();
+        setState(() {
+          _voiceState = VoiceState.listening;
+          _statusText = 'Listening...';
+          _transcript = '';
+        });
+      }
     } catch (e) {
       setState(() {
         _voiceState = VoiceState.error;
         _statusText = 'Error: $e';
       });
+    } finally {
+      _isProcessingTurn = false;
     }
   }
 
@@ -121,6 +136,7 @@ class _VoiceScreenState extends State<VoiceScreen>
       _transcript = '';
       _lastResponse = '';
     });
+    _sessionActive = true;
     try {
       await _stt.start();
     } catch (e) {
@@ -132,6 +148,8 @@ class _VoiceScreenState extends State<VoiceScreen>
   }
 
   Future<void> _stopSession() async {
+    _sessionActive = false;
+    _isProcessingTurn = false;
     await _tts.stop();
     await _stt.stop();
     setState(() {

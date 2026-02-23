@@ -69,8 +69,19 @@ class ElevenLabsTts {
   Future<void> _playBytes(Uint8List bytes) async {
     // Write to temp file and play
     final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/ocvoice_tts_${DateTime.now().millisecondsSinceEpoch}.mp3');
-    await file.writeAsBytes(bytes);
+
+    // Ensure cache/temp directory exists in sandboxed macOS app container
+    final outDir = Directory(dir.path);
+    if (!await outDir.exists()) {
+      await outDir.create(recursive: true);
+    }
+
+    final file = File(
+      '${outDir.path}/ocvoice_tts_${DateTime.now().millisecondsSinceEpoch}.mp3',
+    );
+
+    await file.create(recursive: true);
+    await file.writeAsBytes(bytes, flush: true);
 
     await _player.setFilePath(file.path);
     await _player.play();
