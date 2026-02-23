@@ -34,7 +34,7 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # Audio recording (mic input)
-  record: ^5.2.0
+  record: ^6.0.0
 
   # Audio playback (TTS output)
   just_audio: ^0.9.42
