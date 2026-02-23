@@ -138,8 +138,9 @@ class _VoiceScreenState extends State<VoiceScreen>
         _stt.unmuteMic();
       }
 
-      // Back to listening (mic already running)
-      if (mounted && _stt.state == SttState.listening) {
+      // Always return to listening — don't gate on STT state
+      // (STT may briefly be in connecting/other state but mic is still running)
+      if (mounted) {
         setState(() {
           _voiceState = VoiceState.listening;
           _statusText = 'Listening...';

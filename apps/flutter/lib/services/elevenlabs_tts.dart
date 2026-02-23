@@ -84,10 +84,13 @@ class ElevenLabsTts {
     await file.writeAsBytes(bytes, flush: true);
 
     await _player.setFilePath(file.path);
-    await _player.play();
-    await _player.processingStateStream.firstWhere(
+    // Subscribe BEFORE play() to avoid race condition where completed fires
+    // before the listener is attached (hangs forever on short audio).
+    final completion = _player.processingStateStream.firstWhere(
       (s) => s == ProcessingState.completed,
     );
+    await _player.play();
+    await completion;
 
     // Clean up temp file
     try {
