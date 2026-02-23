@@ -91,8 +91,11 @@ class _VoiceScreenState extends State<VoiceScreen>
           _lastHeardTranscript = clean;
         }
 
-        // Automatic interruption (barge-in): user speaks while assistant is talking.
-        if (_voiceState == VoiceState.speaking && clean.isNotEmpty) {
+        // Barge-in: user speaks while assistant is talking.
+        // Only trigger if mic is NOT muted — prevents echo from stopping TTS.
+        if (_voiceState == VoiceState.speaking &&
+            clean.isNotEmpty &&
+            !_stt.isMicMuted) {
           await _tts.stop();
           if (mounted) {
             setState(() {

@@ -66,20 +66,22 @@ class DeepgramStt {
     }
   }
 
-  // When true, audio chunks are NOT forwarded to Deepgram (mic muted during TTS)
+  // When true, barge-in is suppressed (used during TTS to ignore echo).
+  // Audio still flows to Deepgram so the WebSocket connection stays alive.
   bool _micMuted = false;
+  bool get isMicMuted => _micMuted;
 
-  /// Mute the microphone — mic hardware stays on but audio is not sent to
-  /// Deepgram. Call before TTS playback to prevent echo-triggered barge-in.
+  /// Suppress barge-in — audio still reaches Deepgram but echo-triggered
+  /// interrupts are ignored. Call before TTS playback.
   void muteMic() {
     _micMuted = true;
-    _finalBuffer.clear(); // discard any partials from before mute
+    _finalBuffer.clear(); // discard partials accumulated before mute
   }
 
-  /// Unmute the microphone — audio forwarding resumes. Call after TTS ends.
+  /// Re-enable barge-in. Call after TTS finishes.
   void unmuteMic() {
     _micMuted = false;
-    _finalBuffer.clear(); // discard any echo that slipped through
+    _finalBuffer.clear(); // discard any echo transcripts that slipped through
   }
 
   Future<void> _startMic() async {
@@ -96,7 +98,9 @@ class DeepgramStt {
     );
 
     _audioSub = stream.listen((chunk) {
-      if (!_micMuted) _channel?.sink.add(chunk);
+      // Always send audio to Deepgram — keeps the WebSocket alive even during
+      // TTS playback. The _micMuted flag only controls barge-in suppression.
+      _channel?.sink.add(chunk);
     });
   }
 
@@ -139,6 +143,11 @@ class DeepgramStt {
   }
 
   void _fireTurn() {
+    if (_micMuted) {
+      // Discard echo — don't fire a turn during TTS playback
+      _finalBuffer.clear();
+      return;
+    }
     final full = _finalBuffer.join(' ').trim();
     _finalBuffer.clear();
     if (full.isNotEmpty) {
