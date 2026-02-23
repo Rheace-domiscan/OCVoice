@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:record/record.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../config/app_config.dart';
@@ -33,17 +35,18 @@ class DeepgramStt {
     _setState(SttState.connecting);
 
     try {
-      // Auth via query param (works on all platforms including web)
-      final authedUri = Uri.parse(
-        '${AppConfig.deepgramWsUrl}&token=${AppConfig.deepgramApiKey}',
-      );
-      _channel = WebSocketChannel.connect(authedUri);
-
-      // Wait briefly for the connection to establish
-      await _channel!.ready.timeout(
+      // Native: use dart:io WebSocket with Authorization header (proper auth)
+      final ws = await WebSocket.connect(
+        AppConfig.deepgramWsUrl,
+        headers: {
+          'Authorization': 'Token ${AppConfig.deepgramApiKey}',
+        },
+      ).timeout(
         const Duration(seconds: 10),
         onTimeout: () => throw Exception('Deepgram connection timed out'),
       );
+
+      _channel = IOWebSocketChannel(ws);
 
       _channel!.stream.listen(
         _onMessage,
