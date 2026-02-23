@@ -1,10 +1,15 @@
+import 'dart:io';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
 
-/// Singleton that loads/persists all user-configurable credentials from the
-/// device's secure keychain. Falls back to AppConfig compile-time defaults
-/// so development works without going through onboarding every time.
+/// Singleton that loads/persists all user-configurable credentials.
+///
+/// On macOS we use SharedPreferences (NSUserDefaults) because the macOS sandbox
+/// requires a code-signing entitlement for the keychain which breaks unsigned
+/// debug builds. On iOS/Android/Windows we use FlutterSecureStorage.
 class SettingsService {
   SettingsService._();
   static final SettingsService instance = SettingsService._();
@@ -48,23 +53,41 @@ class SettingsService {
       '&endpointing=500'
       '&utterance_end_ms=1500';
 
+  // ── Storage helpers ───────────────────────────────────────────────────────
+
+  bool get _usePrefStorage => Platform.isMacOS;
+
+  Future<String?> _read(String key) async {
+    if (_usePrefStorage) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(key);
+    }
+    return _storage.read(key: key);
+  }
+
+  Future<void> _write(String key, String value) async {
+    if (_usePrefStorage) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(key, value);
+    } else {
+      await _storage.write(key: key, value: value);
+    }
+  }
+
   // ── Load ──────────────────────────────────────────────────────────────────
   Future<void> load() async {
     try {
-      gatewayUrl =
-          await _storage.read(key: _keyGatewayUrl) ?? AppConfig.openclawGatewayUrl;
+      gatewayUrl = await _read(_keyGatewayUrl) ?? AppConfig.openclawGatewayUrl;
       gatewayToken =
-          await _storage.read(key: _keyGatewayToken) ?? AppConfig.openclawGatewayToken;
+          await _read(_keyGatewayToken) ?? AppConfig.openclawGatewayToken;
       deepgramKey =
-          await _storage.read(key: _keyDeepgramKey) ?? AppConfig.deepgramApiKey;
+          await _read(_keyDeepgramKey) ?? AppConfig.deepgramApiKey;
       elevenLabsKey =
-          await _storage.read(key: _keyElevenLabsKey) ?? AppConfig.elevenLabsApiKey;
-      voiceId =
-          await _storage.read(key: _keyVoiceId) ?? AppConfig.elevenLabsVoiceId;
-      onboarded = (await _storage.read(key: _keyOnboarded)) == 'true';
+          await _read(_keyElevenLabsKey) ?? AppConfig.elevenLabsApiKey;
+      voiceId = await _read(_keyVoiceId) ?? AppConfig.elevenLabsVoiceId;
+      onboarded = (await _read(_keyOnboarded)) == 'true';
     } catch (_) {
-      // If keychain is unavailable (e.g. first launch before entitlements),
-      // fall back to AppConfig compile-time defaults.
+      // Fallback to compile-time defaults if storage is unavailable
       gatewayUrl = AppConfig.openclawGatewayUrl;
       gatewayToken = AppConfig.openclawGatewayToken;
       deepgramKey = AppConfig.deepgramApiKey;
@@ -89,13 +112,19 @@ class SettingsService {
     this.voiceId = voiceId.isNotEmpty ? voiceId : AppConfig.elevenLabsVoiceId;
     onboarded = true;
 
-    await Future.wait([
-      _storage.write(key: _keyGatewayUrl, value: this.gatewayUrl),
-      _storage.write(key: _keyGatewayToken, value: this.gatewayToken),
-      _storage.write(key: _keyDeepgramKey, value: this.deepgramKey),
-      _storage.write(key: _keyElevenLabsKey, value: this.elevenLabsKey),
-      _storage.write(key: _keyVoiceId, value: this.voiceId),
-      _storage.write(key: _keyOnboarded, value: 'true'),
-    ]);
+    // Persist to storage (best-effort — in-memory cache is the source of truth
+    // for the current session regardless)
+    try {
+      await Future.wait([
+        _write(_keyGatewayUrl, this.gatewayUrl),
+        _write(_keyGatewayToken, this.gatewayToken),
+        _write(_keyDeepgramKey, this.deepgramKey),
+        _write(_keyElevenLabsKey, this.elevenLabsKey),
+        _write(_keyVoiceId, this.voiceId),
+        _write(_keyOnboarded, 'true'),
+      ]);
+    } catch (_) {
+      // Storage failure is non-fatal; in-memory values are still correct
+    }
   }
 }

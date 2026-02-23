@@ -46,8 +46,11 @@ dependencies:
   # HTTP (OpenClaw + ElevenLabs)
   http: ^1.2.2
 
-  # Secure storage for gateway token
+  # Secure storage for gateway token (mobile/Windows)
   flutter_secure_storage: ^9.2.4
+
+  # Preferences storage — used on macOS (avoids keychain entitlement requirement)
+  shared_preferences: ^2.3.4
 
   # Mic + audio permissions
   permission_handler: ^11.3.1
