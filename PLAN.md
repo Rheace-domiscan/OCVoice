@@ -175,6 +175,17 @@ OCVoice/
 
 ---
 
+## Non-Negotiable Product Requirements
+
+- **No OpenAI API key required in OCVoice**
+  - OCVoice must run without storing, requesting, or requiring an OpenAI key.
+  - Voice stack is: Deepgram (STT) + OpenClaw Gateway (LLM/tools/memory) + ElevenLabs (TTS).
+- **ChatGPT-level voice UX target**
+  - Continuous conversation feel
+  - Fast turn-taking
+  - Natural interruption handling (barge-in)
+  - Minimal user friction
+
 ## Key Decisions Made
 
 | Decision | Choice | Reason |
