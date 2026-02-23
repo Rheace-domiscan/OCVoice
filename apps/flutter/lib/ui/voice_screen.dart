@@ -22,8 +22,8 @@ class _VoiceScreenState extends State<VoiceScreen>
   final _llm = OpenClawClient();
   final _tts = ElevenLabsTts();
 
-  bool _sessionActive = false;
-  bool _isProcessingTurn = false;
+  // Single guard — are we mid-LLM+TTS turn?
+  bool _processingTurn = false;
 
   VoiceState _voiceState = VoiceState.idle;
   String _statusText = 'Tap to speak';
@@ -51,32 +51,35 @@ class _VoiceScreenState extends State<VoiceScreen>
   void _listenToStt() {
     _transcriptSub = _stt.transcripts.listen((event) async {
       if (event.startsWith('__SPEECH_FINAL__:')) {
-        if (!_sessionActive || _isProcessingTurn) return;
+        // Ignore if we're already thinking/speaking
+        if (_processingTurn) return;
+
         final text = event.substring('__SPEECH_FINAL__:'.length).trim();
         if (text.isEmpty) return;
+
         setState(() {
           _transcript = text;
           _voiceState = VoiceState.thinking;
           _statusText = 'Thinking...';
         });
+
         await _runLlmAndSpeak(text);
       } else if (!event.startsWith('__')) {
-        // Partial or final transcript (display only)
-        final clean = event.startsWith('[') ? event.substring(1, event.length - 1) : event;
-        setState(() => _transcript = clean);
+        // Partial or final transcript (display only, don't process)
+        if (_processingTurn) return;
+        final clean = event.startsWith('[')
+            ? event.substring(1, event.length - 1)
+            : event;
+        if (mounted) setState(() => _transcript = clean);
       }
     });
   }
 
   Future<void> _runLlmAndSpeak(String userText) async {
-    if (_isProcessingTurn) return;
-    _isProcessingTurn = true;
+    _processingTurn = true;
 
     try {
-      // Pause listening during assistant turn to avoid overlapping turns
-      await _stt.stop();
-
-      // Collect full LLM response (streaming into buffer)
+      // Buffer full LLM response (streaming)
       final buffer = StringBuffer();
       await for (final chunk in _llm.chat(userText)) {
         buffer.write(chunk);
@@ -85,17 +88,19 @@ class _VoiceScreenState extends State<VoiceScreen>
       final response = buffer.toString().trim();
       if (response.isEmpty) return;
 
-      setState(() {
-        _lastResponse = response;
-        _voiceState = VoiceState.speaking;
-        _statusText = 'Speaking...';
-      });
+      if (mounted) {
+        setState(() {
+          _lastResponse = response;
+          _voiceState = VoiceState.speaking;
+          _statusText = 'Speaking...';
+        });
+      }
 
+      // Play TTS — mic stays open but _processingTurn blocks overlapping finals
       await _tts.speak(response);
 
-      // Resume listening for next turn
-      if (_sessionActive) {
-        await _stt.start();
+      // Back to listening (mic already running)
+      if (mounted && _stt.state == SttState.listening) {
         setState(() {
           _voiceState = VoiceState.listening;
           _statusText = 'Listening...';
@@ -103,25 +108,18 @@ class _VoiceScreenState extends State<VoiceScreen>
         });
       }
     } catch (e) {
-      setState(() {
-        _voiceState = VoiceState.error;
-        _statusText = 'Error: $e';
-      });
+      if (mounted) {
+        setState(() {
+          _voiceState = VoiceState.error;
+          _statusText = 'Error: $e';
+        });
+      }
     } finally {
-      _isProcessingTurn = false;
+      _processingTurn = false;
     }
   }
 
   Future<void> _toggleSession() async {
-    if (_voiceState == VoiceState.idle || _voiceState == VoiceState.error) {
-      await _startSession();
-    } else {
-      await _stopSession();
-    }
-  }
-
-  Future<void> _startSession() async {
-    // Web browser can't do native mic WebSocket streaming — native app required
     if (kIsWeb) {
       setState(() {
         _voiceState = VoiceState.error;
@@ -130,13 +128,22 @@ class _VoiceScreenState extends State<VoiceScreen>
       return;
     }
 
+    if (_voiceState == VoiceState.idle || _voiceState == VoiceState.error) {
+      await _startSession();
+    } else {
+      await _stopSession();
+    }
+  }
+
+  Future<void> _startSession() async {
     setState(() {
       _voiceState = VoiceState.listening;
       _statusText = 'Listening...';
       _transcript = '';
       _lastResponse = '';
+      _processingTurn = false;
     });
-    _sessionActive = true;
+
     try {
       await _stt.start();
     } catch (e) {
@@ -148,10 +155,10 @@ class _VoiceScreenState extends State<VoiceScreen>
   }
 
   Future<void> _stopSession() async {
-    _sessionActive = false;
-    _isProcessingTurn = false;
+    _processingTurn = false;
     await _tts.stop();
     await _stt.stop();
+    _llm.clearHistory();
     setState(() {
       _voiceState = VoiceState.idle;
       _statusText = 'Tap to speak';
@@ -162,15 +169,16 @@ class _VoiceScreenState extends State<VoiceScreen>
   Color get _stateColor {
     return switch (_voiceState) {
       VoiceState.idle => const Color(0xFF3A3A3A),
-      VoiceState.listening => const Color(0xFF1DB954), // green
-      VoiceState.thinking => const Color(0xFFF5A623), // amber
-      VoiceState.speaking => const Color(0xFF4A90E2), // blue
-      VoiceState.error => const Color(0xFFE74C3C), // red
+      VoiceState.listening => const Color(0xFF1DB954),
+      VoiceState.thinking => const Color(0xFFF5A623),
+      VoiceState.speaking => const Color(0xFF4A90E2),
+      VoiceState.error => const Color(0xFFE74C3C),
     };
   }
 
   bool get _isPulsing =>
-      _voiceState == VoiceState.listening || _voiceState == VoiceState.speaking;
+      _voiceState == VoiceState.listening ||
+      _voiceState == VoiceState.speaking;
 
   @override
   Widget build(BuildContext context) {
@@ -179,7 +187,6 @@ class _VoiceScreenState extends State<VoiceScreen>
       body: SafeArea(
         child: Column(
           children: [
-            // Header
             const Padding(
               padding: EdgeInsets.all(24),
               child: Text(
@@ -195,7 +202,6 @@ class _VoiceScreenState extends State<VoiceScreen>
 
             const Spacer(),
 
-            // Transcript display
             if (_transcript.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -212,17 +218,13 @@ class _VoiceScreenState extends State<VoiceScreen>
 
             const SizedBox(height: 40),
 
-            // Main mic button
             GestureDetector(
               onTap: _toggleSession,
               child: AnimatedBuilder(
                 animation: _pulseAnim,
                 builder: (context, child) {
                   final scale = _isPulsing ? _pulseAnim.value : 1.0;
-                  return Transform.scale(
-                    scale: scale,
-                    child: child,
-                  );
+                  return Transform.scale(scale: scale, child: child);
                 },
                 child: Container(
                   width: 120,
@@ -239,7 +241,8 @@ class _VoiceScreenState extends State<VoiceScreen>
                     ],
                   ),
                   child: Icon(
-                    _voiceState == VoiceState.idle || _voiceState == VoiceState.error
+                    _voiceState == VoiceState.idle ||
+                            _voiceState == VoiceState.error
                         ? Icons.mic
                         : Icons.stop,
                     color: Colors.white,
@@ -251,9 +254,9 @@ class _VoiceScreenState extends State<VoiceScreen>
 
             const SizedBox(height: 32),
 
-            // Status text
             Text(
               _statusText,
+              textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white38,
                 fontSize: 14,
@@ -263,7 +266,6 @@ class _VoiceScreenState extends State<VoiceScreen>
 
             const Spacer(),
 
-            // Last response (faint)
             if (_lastResponse.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(32, 0, 32, 32),

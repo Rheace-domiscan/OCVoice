@@ -19,6 +19,9 @@ class DeepgramStt {
   final _transcriptController = StreamController<String>.broadcast();
   final _stateController = StreamController<SttState>.broadcast();
 
+  // Accumulates is_final transcript segments between utterance boundaries
+  final List<String> _finalBuffer = [];
+
   Stream<String> get transcripts => _transcriptController.stream;
   Stream<SttState> get states => _stateController.stream;
 
@@ -32,10 +35,11 @@ class DeepgramStt {
 
   Future<void> start() async {
     if (_state != SttState.idle) return;
+    _finalBuffer.clear();
     _setState(SttState.connecting);
 
     try {
-      // Native: use dart:io WebSocket with Authorization header (proper auth)
+      // Native: use dart:io WebSocket with Authorization header
       final ws = await WebSocket.connect(
         AppConfig.deepgramWsUrl,
         headers: {
@@ -76,9 +80,7 @@ class DeepgramStt {
     );
 
     _audioSub = stream.listen((chunk) {
-      if (_channel != null) {
-        _channel!.sink.add(chunk);
-      }
+      _channel?.sink.add(chunk);
     });
   }
 
@@ -90,29 +92,42 @@ class DeepgramStt {
 
       if (type == 'Results') {
         final channel = (json['channel'] as Map<String, dynamic>?);
-        final alternatives =
-            channel?['alternatives'] as List<dynamic>?;
+        final alternatives = channel?['alternatives'] as List<dynamic>?;
         final transcript =
             alternatives?.firstOrNull?['transcript'] as String? ?? '';
         final isFinal = json['is_final'] as bool? ?? false;
         final speechFinal = json['speech_final'] as bool? ?? false;
 
-        if (transcript.isNotEmpty) {
-          _transcriptController.add(
-            isFinal ? transcript : '[$transcript]', // prefix partial
-          );
+        // Show partial results in UI (prefixed with [ so UI can display them)
+        if (transcript.isNotEmpty && !isFinal) {
+          _transcriptController.add('[$transcript]');
         }
 
+        // Accumulate finalised transcript segments
+        if (isFinal && transcript.isNotEmpty) {
+          _finalBuffer.add(transcript);
+          _transcriptController.add(transcript);
+        }
+
+        // speech_final=true with content: fire the turn immediately
         if (speechFinal && transcript.isNotEmpty) {
-          // Signal that speech is done — caller uses this to trigger OpenClaw
-          _transcriptController.add('__SPEECH_FINAL__:$transcript');
+          _fireTurn();
         }
       }
 
+      // UtteranceEnd = definitive silence — fire whatever we've accumulated
       if (type == 'UtteranceEnd') {
-        _transcriptController.add('__UTTERANCE_END__');
+        _fireTurn();
       }
     } catch (_) {}
+  }
+
+  void _fireTurn() {
+    final full = _finalBuffer.join(' ').trim();
+    _finalBuffer.clear();
+    if (full.isNotEmpty) {
+      _transcriptController.add('__SPEECH_FINAL__:$full');
+    }
   }
 
   void _onError(dynamic error) {
@@ -131,6 +146,7 @@ class DeepgramStt {
     _recorder?.dispose();
     _recorder = null;
     _audioSub = null;
+    _finalBuffer.clear();
 
     try {
       _channel?.sink.close();
