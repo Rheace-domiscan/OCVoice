@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../config/app_config.dart';
+import 'settings_service.dart';
 
 class OpenClawClient {
   final List<Map<String, String>> _history = [];
@@ -12,20 +12,25 @@ class OpenClawClient {
   Stream<String> chat(String userMessage) async* {
     _history.add({'role': 'user', 'content': userMessage});
 
+    final s = SettingsService.instance;
     final messages = [
-      {'role': 'system', 'content': AppConfig.openclawSystemPrompt},
+      {
+        'role': 'system',
+        'content': 'You are a voice assistant powered by OpenClaw. '
+            'Be concise — your responses will be spoken aloud. '
+            'Avoid markdown, bullet points, or formatting. '
+            'Respond in natural spoken language.',
+      },
       ..._history,
     ];
 
-    final uri = Uri.parse(
-      '${AppConfig.openclawGatewayUrl}/v1/chat/completions',
-    );
+    final uri = Uri.parse('${s.gatewayUrl}/v1/chat/completions');
 
     final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer ${AppConfig.openclawGatewayToken}'
+      ..headers['Authorization'] = 'Bearer ${s.gatewayToken}'
       ..headers['Content-Type'] = 'application/json'
       ..body = jsonEncode({
-        'model': AppConfig.openclawModel,
+        'model': 'openclaw',
         'messages': messages,
         'stream': true,
       });

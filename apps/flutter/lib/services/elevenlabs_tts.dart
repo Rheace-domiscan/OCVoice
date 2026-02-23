@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../config/app_config.dart';
+import 'settings_service.dart';
 
 class ElevenLabsTts {
   final AudioPlayer _player = AudioPlayer();
@@ -36,17 +36,18 @@ class ElevenLabsTts {
   }
 
   Future<Uint8List> _fetchAudio(String text) async {
+    final s = SettingsService.instance;
     final response = await http.post(
-      Uri.parse(AppConfig.elevenLabsTtsUrl),
+      Uri.parse(s.ttsUrl),
       headers: {
-        'xi-api-key': AppConfig.elevenLabsApiKey,
+        'xi-api-key': s.elevenLabsKey,
         'Content-Type': 'application/json',
         'Accept': 'audio/mpeg',
       },
       body: '''
 {
   "text": ${_jsonString(text)},
-  "model_id": "${AppConfig.elevenLabsModel}",
+  "model_id": "eleven_turbo_v2_5",
   "voice_settings": {
     "stability": 0.5,
     "similarity_boost": 0.75,

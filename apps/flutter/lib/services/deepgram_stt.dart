@@ -7,7 +7,7 @@ import 'package:record/record.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../config/app_config.dart';
+import 'settings_service.dart';
 
 enum SttState { idle, connecting, listening, error }
 
@@ -40,10 +40,11 @@ class DeepgramStt {
 
     try {
       // Native: use dart:io WebSocket with Authorization header
+      final s = SettingsService.instance;
       final ws = await WebSocket.connect(
-        AppConfig.deepgramWsUrl,
+        s.deepgramWsUrl,
         headers: {
-          'Authorization': 'Token ${AppConfig.deepgramApiKey}',
+          'Authorization': 'Token ${s.deepgramKey}',
         },
       ).timeout(
         const Duration(seconds: 10),
