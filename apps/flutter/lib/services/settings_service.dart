@@ -51,7 +51,8 @@ class SettingsService {
       '&channels=1'
       '&interim_results=true'
       '&endpointing=500'
-      '&utterance_end_ms=1500';
+      '&utterance_end_ms=1500'
+      '&vad_events=true'; // enables SpeechStarted events for barge-in detection
 
   // ── Storage helpers ───────────────────────────────────────────────────────
 

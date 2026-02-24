@@ -43,6 +43,7 @@ class DeepgramStt {
   bool _micMuted = false;
   bool get isMicMuted => _micMuted;
   DateTime? _suppressUntil;
+  DateTime? _muteStart; // tracks when TTS started for barge-in timing gate
 
   bool get _isSuppressed {
     if (_micMuted) return true;
@@ -79,13 +80,28 @@ class DeepgramStt {
   void muteMic() {
     _micMuted = true;
     _suppressUntil = null;
+    _muteStart = DateTime.now(); // record when TTS began for timing gate
     _finalBuffer.clear();
   }
 
   void unmuteMic() {
+    // If bargeIn() was already called, _micMuted is already false.
+    // Don't re-apply the grace period — that would suppress the user's barge-in
+    // speech that Deepgram is about to deliver.
+    if (!_micMuted) return;
     _micMuted = false;
+    _muteStart = null;
     // 800ms grace: ignore any Deepgram frames still in flight from TTS echo
     _suppressUntil = DateTime.now().add(const Duration(milliseconds: 800));
+    _finalBuffer.clear();
+  }
+
+  /// Called on barge-in: skip the grace period and immediately accept speech.
+  /// Audio was always flowing to Deepgram — it has the user's words buffered.
+  void bargeIn() {
+    _micMuted = false;
+    _suppressUntil = null;
+    _muteStart = null;
     _finalBuffer.clear();
   }
 
@@ -98,6 +114,7 @@ class DeepgramStt {
     _reconnectTimer = null;
     _micMuted = false;
     _suppressUntil = null;
+    _muteStart = null;
     await _teardownAll();
     _setState(SttState.idle);
   }
@@ -132,8 +149,6 @@ class DeepgramStt {
         return;
       }
 
-      // Dart sends WS ping every 5s; no pong → socket closed → _onWsDone fires.
-      // This is the primary fast-drop-detection mechanism.
       ws.pingInterval = const Duration(seconds: 5);
 
       _ws = ws;
@@ -145,7 +160,7 @@ class DeepgramStt {
       );
 
       await _startMic();
-      _reconnectAttempts = 0; // reset backoff on success
+      _reconnectAttempts = 0;
       _startHealthCheck();
       _setState(SttState.listening);
 
@@ -155,8 +170,6 @@ class DeepgramStt {
       }
     } catch (e) {
       if (_sessionActive && !_disposed) {
-        // ⚠️ Critical: reset _isReconnecting so _scheduleReconnect() isn't
-        // blocked by its own guard on the next retry attempt.
         _isReconnecting = false;
         _scheduleReconnect();
       } else {
@@ -177,18 +190,24 @@ class DeepgramStt {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
         numChannels: 1,
+        // echoCancel maps to hardware/OS AEC:
+        //   iOS   → AVAudioSession .voiceChat mode
+        //   Android → AudioManager.MODE_IN_COMMUNICATION
+        //   macOS → VoiceProcessingIO audio unit
+        //   Windows → WASAPI communications AEC
+        //   Web   → getUserMedia { echoCancellation: true }
+        echoCancel: true,
+        noiseSuppress: true,
+        autoGain: true,
       ),
     );
 
     _audioSub = stream.listen((chunk) {
-      // Audio always flows to Deepgram (keeps WS alive).
-      // _isSuppressed only controls whether transcripts trigger turns.
       final ch = _channel;
       if (ch == null) return;
       try {
         ch.sink.add(chunk);
       } catch (_) {
-        // Sink threw — connection dead; trigger reconnect immediately
         _scheduleReconnect();
       }
     });
@@ -213,7 +232,7 @@ class DeepgramStt {
     _ws = null;
   }
 
-  // ── Health check (belt-and-suspenders for dead readyState) ────────────────
+  // ── Health check ───────────────────────────────────────────────────────────
 
   void _startHealthCheck() {
     _healthTimer?.cancel();
@@ -232,15 +251,12 @@ class DeepgramStt {
   // ── Reconnection ───────────────────────────────────────────────────────────
 
   void _scheduleReconnect() {
-    // One reconnect cycle at a time; _isReconnecting is reset in _connect()
-    // catch block before calling here so retries aren't self-blocked.
     if (_isReconnecting || !_sessionActive || _disposed) return;
 
     _isReconnecting = true;
     _setState(SttState.reconnecting);
     _emit('__RECONNECTING__');
 
-    // Exponential backoff: 1s, 2s, 4s, 8s … capped at 30s
     final delaySec = math.min(30, math.pow(2, _reconnectAttempts).toInt());
     _reconnectAttempts++;
 
@@ -272,6 +288,26 @@ class DeepgramStt {
       final json = jsonDecode(data) as Map<String, dynamic>;
       final type = json['type'] as String?;
 
+      // ── Barge-in detection ───────────────────────────────────────────────
+      // SpeechStarted fires at the onset of speech, before any transcript.
+      // Only forward as a barge-in signal if:
+      //   1. Mic is muted (TTS is actively playing, not just in grace period)
+      //   2. 700ms have elapsed since TTS began (timing gate filters echo that
+      //      arrives immediately when speakers start playing)
+      if (type == 'SpeechStarted') {
+        if (_micMuted) {
+          final start = _muteStart;
+          final elapsed = start != null
+              ? DateTime.now().difference(start).inMilliseconds
+              : 9999;
+          if (elapsed > 700) {
+            _emit('__SPEECH_STARTED__');
+          }
+        }
+        return;
+      }
+
+      // ── Results / UtteranceEnd ───────────────────────────────────────────
       if (type == 'Results') {
         final ch = (json['channel'] as Map<String, dynamic>?);
         final alternatives = ch?['alternatives'] as List<dynamic>?;
@@ -280,8 +316,7 @@ class DeepgramStt {
         final isFinal = json['is_final'] as bool? ?? false;
         final speechFinal = json['speech_final'] as bool? ?? false;
 
-        // Drop ALL transcript events when mic is suppressed (muted or grace
-        // period). This prevents TTS echo from entering the turn pipeline.
+        // Drop all transcript events when suppressed (muted or grace period).
         if (_isSuppressed) {
           if (speechFinal || isFinal) _finalBuffer.clear();
           return;

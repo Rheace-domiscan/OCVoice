@@ -148,6 +148,16 @@ class _VoiceScreenState extends State<VoiceScreen>
         return;
       }
 
+      // ── Barge-in: user started speaking during TTS playback ───────────────
+      // SpeechStarted fires at voice onset (before a transcript exists) so
+      // the cut is immediate. We fade TTS, patch history, then resume.
+      if (event == '__SPEECH_STARTED__') {
+        if (_voiceState == VoiceState.speaking) {
+          await _handleBargeIn();
+        }
+        return;
+      }
+
       if (event.startsWith('__SPEECH_FINAL__:')) {
         if (_processingTurn) return;
 
@@ -187,19 +197,6 @@ class _VoiceScreenState extends State<VoiceScreen>
             : event;
         if (clean.isNotEmpty) _lastHeardTranscript = clean;
 
-        // Barge-in: only when mic is not muted (i.e., not echo)
-        if (_voiceState == VoiceState.speaking &&
-            clean.isNotEmpty &&
-            !_stt.isMicMuted) {
-          await _tts.stop();
-          if (mounted) {
-            setState(() {
-              _voiceState = VoiceState.listening;
-              _statusText = 'Listening...';
-            });
-          }
-        }
-
         if (_processingTurn) return;
         if (mounted) setState(() => _transcript = clean);
       }
@@ -235,7 +232,10 @@ class _VoiceScreenState extends State<VoiceScreen>
         _stt.unmuteMic();
       }
 
-      if (mounted) {
+      // Only reset to listening if barge-in hasn't already taken over.
+      // (barge-in sets _voiceState = listening + _processingTurn = false;
+      // we don't want to stomp the live transcript it's already capturing)
+      if (mounted && _voiceState == VoiceState.speaking) {
         setState(() {
           _voiceState = VoiceState.listening;
           _statusText = 'Listening...';
@@ -301,6 +301,40 @@ class _VoiceScreenState extends State<VoiceScreen>
       _transcript = '';
       _lastHeardTranscript = '';
     });
+  }
+
+  /// Barge-in handler: user spoke while assistant was talking.
+  /// - Fades TTS to silence (~150ms, feels like being heard not cut off)
+  /// - Patches history so LLM knows the response was interrupted
+  /// - Calls bargeIn() on STT — skips grace period, immediately accepts speech
+  /// - Deepgram already has the user's audio buffered, next turn fires normally
+  Future<void> _handleBargeIn() async {
+    if (_voiceState != VoiceState.speaking) return;
+
+    // Unlock turn processing immediately (don't wait for TTS future to resolve)
+    _processingTurn = false;
+    _spinCtrl.stop();
+
+    // Patch LLM history: mark the last response as interrupted so the LLM
+    // has full conversational context and can respond naturally to the cut-in.
+    if (_lastResponse.isNotEmpty) {
+      _llm.updateLastAssistantMessage('$_lastResponse [interrupted by user]');
+    }
+
+    // Fade TTS out (~150ms) — sounds like the assistant heard you and trailed
+    // off, rather than being hard-stopped mid-word.
+    await _tts.fadeAndStop();
+
+    // Tell STT to accept speech immediately (skip the 800ms echo grace period).
+    _stt.bargeIn();
+
+    if (mounted) {
+      setState(() {
+        _voiceState = VoiceState.listening;
+        _statusText = 'Listening...';
+        _transcript = '';
+      });
+    }
   }
 
   // ── State-derived values ──────────────────────────────────────────────────

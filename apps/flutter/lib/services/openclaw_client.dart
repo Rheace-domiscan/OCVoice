@@ -68,4 +68,18 @@ class OpenClawClient {
   }
 
   void clearHistory() => _history.clear();
+
+  /// Patch the last assistant message in history.
+  /// Called on barge-in: marks the response as interrupted so the LLM has
+  /// full context and can respond naturally (e.g. "sorry, you were saying?").
+  void updateLastAssistantMessage(String text) {
+    for (int i = _history.length - 1; i >= 0; i--) {
+      if (_history[i]['role'] == 'assistant') {
+        _history[i] = {'role': 'assistant', 'content': text};
+        return;
+      }
+    }
+    // No prior assistant message — just append (shouldn't normally happen)
+    _history.add({'role': 'assistant', 'content': text});
+  }
 }

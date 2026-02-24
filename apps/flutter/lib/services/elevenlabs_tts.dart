@@ -29,9 +29,26 @@ class ElevenLabsTts {
     }
   }
 
-  /// Stop any current playback immediately.
+  /// Stop any current playback immediately (hard stop).
   Future<void> stop() async {
     await _player.stop();
+    await _player.setVolume(1.0); // reset for next play
+    _isSpeaking = false;
+  }
+
+  /// Graceful stop: fade volume to 0 over ~150ms then stop.
+  /// Used on barge-in so the cut feels like being heard, not cut off.
+  Future<void> fadeAndStop() async {
+    if (!_isSpeaking) return;
+    try {
+      // 6 steps × 25ms = 150ms total fade
+      for (var v = 0.8; v >= 0; v -= 0.2) {
+        await _player.setVolume(v < 0 ? 0 : v);
+        await Future.delayed(const Duration(milliseconds: 25));
+      }
+    } catch (_) {}
+    await _player.stop();
+    await _player.setVolume(1.0); // reset for next play
     _isSpeaking = false;
   }
 
@@ -85,10 +102,12 @@ class ElevenLabsTts {
     await file.writeAsBytes(bytes, flush: true);
 
     await _player.setFilePath(file.path);
-    // Subscribe BEFORE play() to avoid race condition where completed fires
-    // before the listener is attached (hangs forever on short audio).
+    // Subscribe BEFORE play() to avoid race condition on short audio.
+    // Also accept idle: when stopped externally (e.g. barge-in fadeAndStop),
+    // just_audio transitions to idle not completed — without this the future
+    // would hang forever and block the voice turn pipeline.
     final completion = _player.processingStateStream.firstWhere(
-      (s) => s == ProcessingState.completed,
+      (s) => s == ProcessingState.completed || s == ProcessingState.idle,
     );
     await _player.play();
     await completion;
