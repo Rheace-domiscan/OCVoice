@@ -34,6 +34,7 @@ class DeepgramStt {
 
   // Reconnection backoff: 1s, 2s, 4s, 8s, … capped at 30s
   int _reconnectAttempts = 0;
+  bool _isReconnecting = false; // true between a drop and a successful reconnect
 
   // Barge-in suppression (muted during TTS to avoid echo)
   bool _micMuted = false;
@@ -60,6 +61,7 @@ class DeepgramStt {
     if (_sessionActive) return;
     _sessionActive = true;
     _reconnectAttempts = 0;
+    _isReconnecting = false;
     _finalBuffer.clear();
     await _connect();
   }
@@ -76,6 +78,7 @@ class DeepgramStt {
 
   Future<void> stop() async {
     _sessionActive = false;
+    _isReconnecting = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _micMuted = false;
@@ -118,6 +121,12 @@ class DeepgramStt {
       await _startMic();
       _reconnectAttempts = 0; // successful connection — reset backoff
       _setState(SttState.listening);
+
+      // If this was a reconnect (not the initial start), notify listeners
+      if (_isReconnecting) {
+        _isReconnecting = false;
+        _emit('__RECONNECTED__');
+      }
     } catch (e) {
       if (_sessionActive && !_disposed) {
         _scheduleReconnect();
@@ -172,6 +181,7 @@ class DeepgramStt {
   void _scheduleReconnect() {
     if (!_sessionActive || _disposed) return;
 
+    _isReconnecting = true;
     _setState(SttState.reconnecting);
     _emit('__RECONNECTING__');
 
