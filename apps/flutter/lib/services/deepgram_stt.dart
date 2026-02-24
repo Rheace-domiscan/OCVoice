@@ -250,13 +250,27 @@ class DeepgramStt {
 
   // ── Reconnection ───────────────────────────────────────────────────────────
 
+  // Maximum reconnect attempts before surfacing a fatal error.
+  // Backoff: 1s + 2s + 4s + 8s + 16s = 31s total wait before giving up.
+  static const int kMaxReconnectAttempts = 5;
+
   void _scheduleReconnect() {
     if (_isReconnecting || !_sessionActive || _disposed) return;
+
+    // Give up after kMaxReconnectAttempts — emit a fatal sentinel so the
+    // voice screen surfaces an actionable error instead of spinning forever.
+    if (_reconnectAttempts >= kMaxReconnectAttempts) {
+      _sessionActive = false;
+      _setState(SttState.error);
+      _emit('__STT_FAILED__');
+      return;
+    }
 
     _isReconnecting = true;
     _setState(SttState.reconnecting);
     _emit('__RECONNECTING__');
 
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s — then gives up
     final delaySec = math.min(30, math.pow(2, _reconnectAttempts).toInt());
     _reconnectAttempts++;
 

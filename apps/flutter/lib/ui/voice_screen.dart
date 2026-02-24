@@ -25,6 +25,113 @@ const _kDimGold = Color(0xFF5C4A28); // muted gold for reconnecting state
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Error model ───────────────────────────────────────────────────────────────
+
+class _OcError {
+  final String message;      // headline
+  final String? hint;        // sub-line (what to do)
+  final bool needsSettings;  // show "Settings" action button
+  final bool fatal;          // false = toast + keep listening; true = stop
+
+  const _OcError({
+    required this.message,
+    this.hint,
+    this.needsSettings = false,
+    this.fatal = true,
+  });
+}
+
+_OcError _classifyError(dynamic e) {
+  final s = e.toString().toLowerCase();
+
+  // Microphone
+  if (s.contains('permission') || s.contains('microphone') || s.contains('audio input')) {
+    return const _OcError(
+      message: 'Mic access denied',
+      hint: 'System Prefs → Privacy → Microphone → allow OCVoice',
+      needsSettings: false,
+    );
+  }
+
+  // 401 / auth — distinguish service
+  if (s.contains('401') || s.contains('unauthorized') || s.contains('invalid api key')) {
+    if (s.contains('openclaw') || s.contains('gateway')) {
+      return const _OcError(
+        message: 'Gateway token rejected (401)',
+        hint: 'Update your OpenClaw token in Settings',
+        needsSettings: true,
+      );
+    }
+    if (s.contains('elevenlabs') || s.contains('tts')) {
+      return const _OcError(
+        message: 'ElevenLabs key rejected (401)',
+        hint: 'Update your ElevenLabs key in Settings',
+        needsSettings: true,
+      );
+    }
+    return const _OcError(
+      message: 'Authentication failed',
+      hint: 'Check your API keys in Settings',
+      needsSettings: true,
+    );
+  }
+
+  // Gateway down / transient server errors
+  if (s.contains('openclaw') || s.contains('gateway')) {
+    if (s.contains('503') || s.contains('502') || s.contains('504') || s.contains('500')) {
+      return const _OcError(
+        message: 'Gateway unreachable',
+        hint: 'Is OpenClaw running? Check Tailscale.',
+        fatal: false, // transient — keep listening, show toast
+      );
+    }
+    return const _OcError(
+      message: 'Gateway error',
+      hint: 'Check your gateway URL in Settings',
+      needsSettings: true,
+      fatal: false,
+    );
+  }
+
+  // ElevenLabs / TTS transient
+  if (s.contains('elevenlabs') || s.contains('tts error')) {
+    return const _OcError(
+      message: 'Speech synthesis failed',
+      hint: 'ElevenLabs may be down, or quota exceeded',
+      fatal: false,
+    );
+  }
+
+  // STT gave up after max reconnect attempts
+  if (s.contains('__stt_failed__') || (s.contains('deepgram') && s.contains('fail'))) {
+    return const _OcError(
+      message: 'Speech recognition unavailable',
+      hint: 'Check your Deepgram key in Settings',
+      needsSettings: true,
+    );
+  }
+
+  // Network / socket
+  if (s.contains('socket') || s.contains('network') || s.contains('timeout') ||
+      s.contains('connection refused') || s.contains('connection reset')) {
+    return const _OcError(
+      message: 'Network error',
+      hint: 'Check your connection and try again',
+      fatal: false,
+    );
+  }
+
+  // Unknown — show abbreviated message
+  final raw = e.toString();
+  return _OcError(
+    message: 'Something went wrong',
+    hint: raw.length <= 80 ? raw : null,
+    fatal: false,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 enum VoiceState { idle, listening, thinking, speaking, reconnecting, error }
 
 class VoiceScreen extends StatefulWidget {
@@ -47,6 +154,8 @@ class _VoiceScreenState extends State<VoiceScreen>
   String _transcript = '';
   String _lastResponse = '';
   String _lastHeardTranscript = '';
+  _OcError? _errorInfo;
+  bool _isErrorToast = false;
 
   StreamSubscription<String>? _transcriptSub;
 
@@ -115,11 +224,14 @@ class _VoiceScreenState extends State<VoiceScreen>
     _listenToStt();
   }
 
-  void _showToast(String message) {
+  void _showToast(String message, {bool isError = false}) {
     _toastTimer?.cancel();
-    setState(() => _toastMessage = message);
+    setState(() {
+      _toastMessage = message;
+      _isErrorToast = isError;
+    });
     _toastCtrl.forward(from: 0);
-    _toastTimer = Timer(const Duration(milliseconds: 2500), () {
+    _toastTimer = Timer(const Duration(milliseconds: 3000), () {
       if (mounted) _toastCtrl.reverse();
     });
   }
@@ -144,6 +256,24 @@ class _VoiceScreenState extends State<VoiceScreen>
             _statusText = 'Listening...';
           });
           _showToast('Back online ✓');
+        }
+        return;
+      }
+
+      // STT gave up after max reconnect attempts
+      if (event == '__STT_FAILED__') {
+        if (mounted) {
+          const err = _OcError(
+            message: 'Speech recognition unavailable',
+            hint: 'Deepgram couldn\'t reconnect. Check your key in Settings.',
+            needsSettings: true,
+            fatal: true,
+          );
+          setState(() {
+            _voiceState = VoiceState.error;
+            _statusText = err.message;
+            _errorInfo = err;
+          });
         }
         return;
       }
@@ -244,11 +374,28 @@ class _VoiceScreenState extends State<VoiceScreen>
       }
     } catch (e) {
       _spinCtrl.stop();
-      if (mounted) {
-        setState(() {
-          _voiceState = VoiceState.error;
-          _statusText = 'Error: $e';
-        });
+      final err = _classifyError(e);
+      if (err.fatal) {
+        // Stop session and surface the error with actionable guidance
+        await _stt.stop();
+        if (mounted) {
+          setState(() {
+            _voiceState = VoiceState.error;
+            _statusText = err.message;
+            _errorInfo = err;
+            _processingTurn = false;
+          });
+        }
+        return; // skip the finally processingTurn=false (already set)
+      } else {
+        // Transient — show error toast and keep listening so user can retry
+        if (mounted) {
+          _showToast(err.message, isError: true);
+          setState(() {
+            _voiceState = VoiceState.listening;
+            _statusText = 'Listening...';
+          });
+        }
       }
     } finally {
       _processingTurn = false;
@@ -278,14 +425,19 @@ class _VoiceScreenState extends State<VoiceScreen>
       _lastResponse = '';
       _lastHeardTranscript = '';
       _processingTurn = false;
+      _errorInfo = null;
     });
     try {
       await _stt.start();
     } catch (e) {
-      setState(() {
-        _voiceState = VoiceState.error;
-        _statusText = 'Mic error: $e';
-      });
+      final err = _classifyError(e);
+      if (mounted) {
+        setState(() {
+          _voiceState = VoiceState.error;
+          _statusText = err.message;
+          _errorInfo = err;
+        });
+      }
     }
   }
 
@@ -300,6 +452,7 @@ class _VoiceScreenState extends State<VoiceScreen>
       _statusText = 'Tap to speak';
       _transcript = '';
       _lastHeardTranscript = '';
+      _errorInfo = null;
     });
   }
 
@@ -365,6 +518,7 @@ class _VoiceScreenState extends State<VoiceScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isError = _voiceState == VoiceState.error;
     return Scaffold(
       backgroundColor: _kBg,
       body: SafeArea(
@@ -373,13 +527,13 @@ class _VoiceScreenState extends State<VoiceScreen>
             Column(
               children: [
                 _buildHeader(),
-                const Spacer(flex: 2),
+                Spacer(flex: isError ? 1 : 2),
                 _buildTranscript(),
-                const SizedBox(height: 48),
+                SizedBox(height: isError ? 28 : 48),
                 _buildMicButton(),
-                const SizedBox(height: 32),
+                SizedBox(height: isError ? 18 : 32),
                 _buildStatusLabel(),
-                const Spacer(flex: 3),
+                Spacer(flex: isError ? 2 : 3),
                 _buildResponseText(),
               ],
             ),
@@ -529,17 +683,111 @@ class _VoiceScreenState extends State<VoiceScreen>
   // ── Status label ──────────────────────────────────────────────────────────
 
   Widget _buildStatusLabel() {
+    if (_voiceState == VoiceState.error && _errorInfo != null) {
+      return _buildErrorPanel(_errorInfo!);
+    }
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 250),
       child: Text(
         _statusText,
         key: ValueKey(_statusText),
         textAlign: TextAlign.center,
-        style: TextStyle(
-          color: _voiceState == VoiceState.error ? _kRed : _kTextMuted,
+        style: const TextStyle(
+          color: _kTextMuted,
           fontSize: 13,
           letterSpacing: 0.8,
           fontWeight: FontWeight.w400,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorPanel(_OcError err) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Headline
+        Text(
+          err.message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: _kRed,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.3,
+          ),
+        ),
+        // Hint
+        if (err.hint != null) ...[
+          const SizedBox(height: 5),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Text(
+              err.hint!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: _kTextMuted,
+                fontSize: 12,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 18),
+        // Action buttons
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildErrorButton(
+              label: 'Retry',
+              icon: Icons.refresh_rounded,
+              onTap: _startSession,
+            ),
+            if (err.needsSettings) ...[
+              const SizedBox(width: 12),
+              _buildErrorButton(
+                label: 'Settings',
+                icon: Icons.tune_rounded,
+                onTap: () => Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildErrorButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: _kSurface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _kBorder),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: _kTextMuted),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                color: _kTextMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -569,6 +817,8 @@ class _VoiceScreenState extends State<VoiceScreen>
   // ── Toast ─────────────────────────────────────────────────────────────────
 
   Widget _buildToast() {
+    final color = _isErrorToast ? _kRed : _kGreen;
+    final icon  = _isErrorToast ? Icons.error_outline_rounded : Icons.wifi_rounded;
     return Positioned(
       bottom: 32,
       left: 0,
@@ -583,7 +833,7 @@ class _VoiceScreenState extends State<VoiceScreen>
               decoration: BoxDecoration(
                 color: const Color(0xFF1A2535),
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: _kGreen.withOpacity(0.4)),
+                border: Border.all(color: color.withOpacity(0.4)),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.3),
@@ -595,12 +845,12 @@ class _VoiceScreenState extends State<VoiceScreen>
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.wifi_rounded, size: 14, color: _kGreen),
+                  Icon(icon, size: 14, color: color),
                   const SizedBox(width: 8),
                   Text(
                     _toastMessage,
-                    style: const TextStyle(
-                      color: _kGreen,
+                    style: TextStyle(
+                      color: color,
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
                       letterSpacing: 0.3,
