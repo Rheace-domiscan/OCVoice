@@ -108,13 +108,9 @@ class DeepgramStt {
     try {
       final s = SettingsService.instance;
 
-      // pingInterval: Dart sends a WS ping every N seconds.
-      // If the server doesn't respond with a pong, the socket is closed and
-      // _onWsDone fires — gives us fast drop detection without polling.
       final ws = await WebSocket.connect(
         s.deepgramWsUrl,
         headers: {'Authorization': 'Token ${s.deepgramKey}'},
-        pingInterval: const Duration(seconds: 5),
       ).timeout(
         const Duration(seconds: 10),
         onTimeout: () => throw Exception('Deepgram connection timed out'),
@@ -124,6 +120,11 @@ class DeepgramStt {
         ws.close();
         return;
       }
+
+      // pingInterval: Dart sends a WS ping every 5s.
+      // If the server doesn't respond with a pong, the socket is closed and
+      // _onWsDone fires — fast drop detection without relying on health poll.
+      ws.pingInterval = const Duration(seconds: 5);
 
       _ws = ws;
       _channel = IOWebSocketChannel(ws);
