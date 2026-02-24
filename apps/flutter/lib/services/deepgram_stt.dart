@@ -290,12 +290,16 @@ class DeepgramStt {
 
       // ── Barge-in detection ───────────────────────────────────────────────
       // SpeechStarted fires at the onset of speech, before any transcript.
-      // Only forward as a barge-in signal if:
-      //   1. Mic is muted (TTS is actively playing, not just in grace period)
-      //   2. 700ms have elapsed since TTS began (timing gate filters echo that
-      //      arrives immediately when speakers start playing)
+      //
+      // Barge-in via SpeechStarted is ONLY reliable when hardware AEC is
+      // active (iOS/Android). On macOS/Windows the mic picks up speaker echo
+      // throughout TTS — echo fires SpeechStarted after the timing gate,
+      // clears suppression, then echo transcripts loop back as user input.
+      // On desktop platforms we simply let TTS finish; barge-in is enabled
+      // on mobile once hardware AEC removes the echo signal entirely.
       if (type == 'SpeechStarted') {
-        if (_micMuted) {
+        final bargeInSupported = !Platform.isMacOS && !Platform.isWindows;
+        if (bargeInSupported && _micMuted) {
           final start = _muteStart;
           final elapsed = start != null
               ? DateTime.now().difference(start).inMilliseconds
