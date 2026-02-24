@@ -331,16 +331,27 @@ class _VoiceScreenState extends State<VoiceScreen>
               fontWeight: FontWeight.w300,
             ),
           ),
-          IconButton(
-            onPressed: () {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(
-                  builder: (_) => const OnboardingScreen(),
+          Row(
+            children: [
+              // 🐛 DEBUG: simulate WS drop — remove before release
+              if (_voiceState == VoiceState.listening)
+                IconButton(
+                  onPressed: () => _stt.simulateDrop(),
+                  icon: const Icon(Icons.wifi_off, size: 18, color: _kTextDim),
+                  tooltip: 'Simulate disconnect',
                 ),
-              );
-            },
-            icon: const Icon(Icons.tune_rounded, size: 20, color: _kTextDim),
-            tooltip: 'Settings',
+              IconButton(
+                onPressed: () {
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(
+                      builder: (_) => const OnboardingScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.tune_rounded, size: 20, color: _kTextDim),
+                tooltip: 'Settings',
+              ),
+            ],
           ),
         ],
       ),
