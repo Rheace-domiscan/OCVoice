@@ -28,5 +28,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OCVoice needs microphone access to listen to your voice and send it to the speech recognition service.</string>
 </dict>
 </plist>
