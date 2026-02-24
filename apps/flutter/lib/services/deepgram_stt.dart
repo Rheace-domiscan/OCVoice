@@ -18,7 +18,7 @@ class DeepgramStt {
   AudioRecorder? _recorder;
   StreamSubscription<Uint8List>? _audioSub;
   Timer? _reconnectTimer;
-  Timer? _healthTimer;       // polls socket state every 3s for fast drop detection
+  Timer? _healthTimer;       // polls socket state every 2s as belt-and-suspenders
 
   final _transcriptController = StreamController<String>.broadcast();
   final _stateController = StreamController<SttState>.broadcast();
@@ -34,9 +34,9 @@ class DeepgramStt {
   bool _sessionActive = false;
   bool _disposed = false;
 
-  // Reconnection backoff: 1s, 2s, 4s, 8s, … capped at 30s
+  // Reconnection state: guarded by _isReconnecting to prevent duplicate calls
   int _reconnectAttempts = 0;
-  bool _isReconnecting = false; // true between a drop and a successful reconnect
+  bool _isReconnecting = false;
 
   // Barge-in suppression (muted during TTS to avoid echo)
   bool _micMuted = false;
@@ -107,9 +107,14 @@ class DeepgramStt {
     _setState(SttState.connecting);
     try {
       final s = SettingsService.instance;
+
+      // pingInterval: Dart sends a WS ping every N seconds.
+      // If the server doesn't respond with a pong, the socket is closed and
+      // _onWsDone fires — gives us fast drop detection without polling.
       final ws = await WebSocket.connect(
         s.deepgramWsUrl,
         headers: {'Authorization': 'Token ${s.deepgramKey}'},
+        pingInterval: const Duration(seconds: 5),
       ).timeout(
         const Duration(seconds: 10),
         onTimeout: () => throw Exception('Deepgram connection timed out'),
@@ -122,7 +127,11 @@ class DeepgramStt {
 
       _ws = ws;
       _channel = IOWebSocketChannel(ws);
-      _channel!.stream.listen(_onMessage, onError: _onWsError, onDone: _onWsDone);
+      _channel!.stream.listen(
+        _onMessage,
+        onError: _onWsError,
+        onDone: _onWsDone,
+      );
 
       await _startMic();
       _reconnectAttempts = 0; // successful connection — reset backoff
@@ -161,9 +170,15 @@ class DeepgramStt {
     _audioSub = stream.listen((chunk) {
       // Audio always flows to Deepgram (keeps WS alive).
       // _micMuted only suppresses barge-in, not the stream itself.
+      // If the sink is dead and throws, treat it as a drop.
+      final ch = _channel;
+      if (ch == null) return;
       try {
-        _channel?.sink.add(chunk);
-      } catch (_) {}
+        ch.sink.add(chunk);
+      } catch (_) {
+        // Sink threw — connection is dead. Trigger reconnect immediately.
+        _scheduleReconnect();
+      }
     });
   }
 
@@ -186,16 +201,18 @@ class DeepgramStt {
     _ws = null;
   }
 
-  // ── Health check ─────────────────────────────────────────────────────────
+  // ── Health check (belt-and-suspenders for readyState) ────────────────────
 
   void _startHealthCheck() {
     _healthTimer?.cancel();
-    _healthTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    _healthTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (!_sessionActive || _disposed) {
         _healthTimer?.cancel();
         return;
       }
       // readyState 1 = OPEN. Anything else = dropped/closing/closed.
+      // pingInterval catches most drops faster, but this catches edge cases
+      // where readyState has gone stale without firing onDone.
       if (_ws != null && _ws!.readyState != WebSocket.open) {
         _healthTimer?.cancel();
         _scheduleReconnect();
@@ -206,12 +223,14 @@ class DeepgramStt {
   // ── Reconnection ──────────────────────────────────────────────────────────
 
   void _scheduleReconnect() {
-    if (!_sessionActive || _disposed) return;
+    // Guard: only one reconnect cycle at a time
+    if (_isReconnecting || !_sessionActive || _disposed) return;
 
     _isReconnecting = true;
     _setState(SttState.reconnecting);
     _emit('__RECONNECTING__');
 
+    // Exponential backoff: 1s, 2s, 4s, 8s … capped at 30s
     final delaySec = math.min(30, math.pow(2, _reconnectAttempts).toInt());
     _reconnectAttempts++;
 
@@ -233,6 +252,7 @@ class DeepgramStt {
 
   void _onWsDone() {
     _channel = null;
+    _ws = null;
     if (_sessionActive && !_disposed) {
       // Unexpected close — reconnect
       _scheduleReconnect();
