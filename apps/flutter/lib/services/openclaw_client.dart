@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 
 import 'settings_service.dart';
@@ -112,6 +113,18 @@ class OpenClawClient {
     }
     _history.add({'role': 'assistant', 'content': text});
   }
+
+  // ── Test accessors ────────────────────────────────────────────────────────
+  // These expose internals for unit testing only. Do not use in production.
+
+  @visibleForTesting
+  List<Map<String, String>> get testHistory => List.unmodifiable(_history);
+
+  @visibleForTesting
+  void testAddToHistory(Map<String, String> entry) => _history.add(entry);
+
+  @visibleForTesting
+  void testTrim() => _trimHistory();
 
   // ── Context trimming ───────────────────────────────────────────────────────
 
