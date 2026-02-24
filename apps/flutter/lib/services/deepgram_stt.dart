@@ -13,10 +13,12 @@ import 'settings_service.dart';
 enum SttState { idle, connecting, listening, reconnecting, error }
 
 class DeepgramStt {
+  WebSocket? _ws;           // raw socket — used for readyState health checks
   WebSocketChannel? _channel;
   AudioRecorder? _recorder;
   StreamSubscription<Uint8List>? _audioSub;
   Timer? _reconnectTimer;
+  Timer? _healthTimer;       // polls socket state every 3s for fast drop detection
 
   final _transcriptController = StreamController<String>.broadcast();
   final _stateController = StreamController<SttState>.broadcast();
@@ -79,6 +81,8 @@ class DeepgramStt {
   Future<void> stop() async {
     _sessionActive = false;
     _isReconnecting = false;
+    _healthTimer?.cancel();
+    _healthTimer = null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _micMuted = false;
@@ -88,6 +92,7 @@ class DeepgramStt {
 
   void dispose() {
     _disposed = true;
+    _healthTimer?.cancel();
     _reconnectTimer?.cancel();
     stop();
     _transcriptController.close();
@@ -115,11 +120,13 @@ class DeepgramStt {
         return;
       }
 
+      _ws = ws;
       _channel = IOWebSocketChannel(ws);
       _channel!.stream.listen(_onMessage, onError: _onWsError, onDone: _onWsDone);
 
       await _startMic();
       _reconnectAttempts = 0; // successful connection — reset backoff
+      _startHealthCheck();
       _setState(SttState.listening);
 
       // If this was a reconnect (not the initial start), notify listeners
@@ -161,6 +168,8 @@ class DeepgramStt {
   }
 
   Future<void> _teardownAll() async {
+    _healthTimer?.cancel();
+    _healthTimer = null;
     await _audioSub?.cancel();
     _audioSub = null;
     try {
@@ -174,6 +183,24 @@ class DeepgramStt {
       _channel?.sink.close();
     } catch (_) {}
     _channel = null;
+    _ws = null;
+  }
+
+  // ── Health check ─────────────────────────────────────────────────────────
+
+  void _startHealthCheck() {
+    _healthTimer?.cancel();
+    _healthTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!_sessionActive || _disposed) {
+        _healthTimer?.cancel();
+        return;
+      }
+      // readyState 1 = OPEN. Anything else = dropped/closing/closed.
+      if (_ws != null && _ws!.readyState != WebSocket.open) {
+        _healthTimer?.cancel();
+        _scheduleReconnect();
+      }
+    });
   }
 
   // ── Reconnection ──────────────────────────────────────────────────────────
