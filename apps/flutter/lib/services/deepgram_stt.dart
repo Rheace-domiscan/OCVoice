@@ -64,13 +64,6 @@ class DeepgramStt {
     await _connect();
   }
 
-  /// DEBUG ONLY — forcibly closes the WebSocket to test reconnection logic.
-  void simulateDrop() {
-    try {
-      _channel?.sink.close();
-    } catch (_) {}
-  }
-
   void muteMic() {
     _micMuted = true;
     _finalBuffer.clear();

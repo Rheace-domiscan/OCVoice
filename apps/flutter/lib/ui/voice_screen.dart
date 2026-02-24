@@ -21,10 +21,11 @@ const _kTextPrimary = Color(0xFFF1F5F9);
 const _kTextSecondary = Color(0xFF94A3B8);
 const _kTextMuted = Color(0xFF64748B);
 const _kTextDim = Color(0xFF475569);
+const _kDimGold = Color(0xFF5C4A28); // muted gold for reconnecting state
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum VoiceState { idle, listening, thinking, speaking, error }
+enum VoiceState { idle, listening, thinking, speaking, reconnecting, error }
 
 class VoiceScreen extends StatefulWidget {
   const VoiceScreen({super.key});
@@ -60,6 +61,13 @@ class _VoiceScreenState extends State<VoiceScreen>
   late AnimationController _waveCtrl;
   late List<Animation<double>> _waveAnims;
 
+  // Toast notification (slide + fade)
+  late AnimationController _toastCtrl;
+  late Animation<double> _toastFade;
+  late Animation<Offset> _toastSlide;
+  String _toastMessage = '';
+  Timer? _toastTimer;
+
   @override
   void initState() {
     super.initState();
@@ -94,7 +102,26 @@ class _VoiceScreenState extends State<VoiceScreen>
       );
     });
 
+    _toastCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _toastFade = CurvedAnimation(parent: _toastCtrl, curve: Curves.easeOut);
+    _toastSlide = Tween<Offset>(
+      begin: const Offset(0, 1.5),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _toastCtrl, curve: Curves.easeOut));
+
     _listenToStt();
+  }
+
+  void _showToast(String message) {
+    _toastTimer?.cancel();
+    setState(() => _toastMessage = message);
+    _toastCtrl.forward(from: 0);
+    _toastTimer = Timer(const Duration(milliseconds: 2500), () {
+      if (mounted) _toastCtrl.reverse();
+    });
   }
 
   void _listenToStt() {
@@ -102,14 +129,21 @@ class _VoiceScreenState extends State<VoiceScreen>
       // ── Reconnection events ────────────────────────────────────────────
       if (event == '__RECONNECTING__') {
         if (mounted && _voiceState != VoiceState.idle) {
-          setState(() => _statusText = 'Reconnecting...');
+          setState(() {
+            _voiceState = VoiceState.reconnecting;
+            _statusText = 'Reconnecting...';
+          });
         }
         return;
       }
 
       if (event == '__RECONNECTED__') {
         if (mounted && _voiceState != VoiceState.idle) {
-          setState(() => _statusText = 'Listening...');
+          setState(() {
+            _voiceState = VoiceState.listening;
+            _statusText = 'Listening...';
+          });
+          _showToast('Back online ✓');
         }
         return;
       }
@@ -276,6 +310,7 @@ class _VoiceScreenState extends State<VoiceScreen>
         VoiceState.listening => _kGold,
         VoiceState.thinking => _kGold,
         VoiceState.speaking => _kBlue,
+        VoiceState.reconnecting => _kDimGold,
         VoiceState.error => _kRed,
       };
 
@@ -284,11 +319,13 @@ class _VoiceScreenState extends State<VoiceScreen>
         VoiceState.listening => Icons.mic_rounded,
         VoiceState.thinking => Icons.mic_rounded,
         VoiceState.speaking => Icons.volume_up_rounded,
+        VoiceState.reconnecting => Icons.wifi_off_rounded,
       };
 
   bool get _isPulsing =>
       _voiceState == VoiceState.listening ||
-      _voiceState == VoiceState.speaking;
+      _voiceState == VoiceState.speaking ||
+      _voiceState == VoiceState.reconnecting;
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
@@ -297,17 +334,22 @@ class _VoiceScreenState extends State<VoiceScreen>
     return Scaffold(
       backgroundColor: _kBg,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _buildHeader(),
-            const Spacer(flex: 2),
-            _buildTranscript(),
-            const SizedBox(height: 48),
-            _buildMicButton(),
-            const SizedBox(height: 32),
-            _buildStatusLabel(),
-            const Spacer(flex: 3),
-            _buildResponseText(),
+            Column(
+              children: [
+                _buildHeader(),
+                const Spacer(flex: 2),
+                _buildTranscript(),
+                const SizedBox(height: 48),
+                _buildMicButton(),
+                const SizedBox(height: 32),
+                _buildStatusLabel(),
+                const Spacer(flex: 3),
+                _buildResponseText(),
+              ],
+            ),
+            _buildToast(),
           ],
         ),
       ),
@@ -331,27 +373,16 @@ class _VoiceScreenState extends State<VoiceScreen>
               fontWeight: FontWeight.w300,
             ),
           ),
-          Row(
-            children: [
-              // 🐛 DEBUG: simulate WS drop — remove before release
-              if (_voiceState == VoiceState.listening)
-                IconButton(
-                  onPressed: () => _stt.simulateDrop(),
-                  icon: const Icon(Icons.wifi_off, size: 18, color: _kTextDim),
-                  tooltip: 'Simulate disconnect',
+          IconButton(
+            onPressed: () {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (_) => const OnboardingScreen(),
                 ),
-              IconButton(
-                onPressed: () {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (_) => const OnboardingScreen(),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.tune_rounded, size: 20, color: _kTextDim),
-                tooltip: 'Settings',
-              ),
-            ],
+              );
+            },
+            icon: const Icon(Icons.tune_rounded, size: 20, color: _kTextDim),
+            tooltip: 'Settings',
           ),
         ],
       ),
@@ -501,8 +532,59 @@ class _VoiceScreenState extends State<VoiceScreen>
     );
   }
 
+  // ── Toast ─────────────────────────────────────────────────────────────────
+
+  Widget _buildToast() {
+    return Positioned(
+      bottom: 32,
+      left: 0,
+      right: 0,
+      child: FadeTransition(
+        opacity: _toastFade,
+        child: SlideTransition(
+          position: _toastSlide,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A2535),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: _kGreen.withOpacity(0.4)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.wifi_rounded, size: 14, color: _kGreen),
+                  const SizedBox(width: 8),
+                  Text(
+                    _toastMessage,
+                    style: const TextStyle(
+                      color: _kGreen,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _toastTimer?.cancel();
+    _toastCtrl.dispose();
     _transcriptSub?.cancel();
     _pulseCtrl.dispose();
     _spinCtrl.dispose();
