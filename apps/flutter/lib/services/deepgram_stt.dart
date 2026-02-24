@@ -185,20 +185,20 @@ class DeepgramStt {
     final hasPermission = await _recorder!.hasPermission();
     if (!hasPermission) throw Exception('Microphone permission denied');
 
+    // echoCancel/autoGain on macOS calls setVoiceProcessingEnabled which fails
+    // in an unsigned sandbox build. Enable only on mobile platforms where the
+    // OS audio session handles it cleanly. macOS echo is handled by the 700ms
+    // timing gate on SpeechStarted instead.
+    final bool usePlatformAec = !Platform.isMacOS && !Platform.isWindows;
+
     final stream = await _recorder!.startStream(
-      const RecordConfig(
+      RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
         numChannels: 1,
-        // echoCancel maps to hardware/OS AEC:
-        //   iOS   → AVAudioSession .voiceChat mode
-        //   Android → AudioManager.MODE_IN_COMMUNICATION
-        //   macOS → VoiceProcessingIO audio unit
-        //   Windows → WASAPI communications AEC
-        //   Web   → getUserMedia { echoCancellation: true }
-        echoCancel: true,
-        noiseSuppress: true,
-        autoGain: true,
+        echoCancel: usePlatformAec,
+        noiseSuppress: usePlatformAec,
+        autoGain: usePlatformAec,
       ),
     );
 
