@@ -99,6 +99,21 @@ class _VoiceScreenState extends State<VoiceScreen>
 
   void _listenToStt() {
     _transcriptSub = _stt.transcripts.listen((event) async {
+      // ── Reconnection events ────────────────────────────────────────────
+      if (event == '__RECONNECTING__') {
+        if (mounted && _voiceState != VoiceState.idle) {
+          setState(() => _statusText = 'Reconnecting...');
+        }
+        return;
+      }
+
+      if (event == '__RECONNECTED__') {
+        if (mounted && _voiceState != VoiceState.idle) {
+          setState(() => _statusText = 'Listening...');
+        }
+        return;
+      }
+
       if (event.startsWith('__SPEECH_FINAL__:')) {
         if (_processingTurn) return;
 
