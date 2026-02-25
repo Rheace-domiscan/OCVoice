@@ -21,12 +21,10 @@ class DeepgramStt {
   Timer? _reconnectTimer;
   Timer? _healthTimer;
 
-  final _transcriptController = StreamController<String>.broadcast();
   final _eventController = StreamController<SttEvent>.broadcast();
   final _stateController = StreamController<SttState>.broadcast();
   final List<String> _finalBuffer = [];
 
-  Stream<String> get transcripts => _transcriptController.stream;
   Stream<SttEvent> get events => _eventController.stream;
   Stream<SttState> get states => _stateController.stream;
 
@@ -55,12 +53,6 @@ class DeepgramStt {
   }
 
   // ── Safe emit helpers ──────────────────────────────────────────────────────
-
-  void _emit(String event) {
-    if (!_disposed && !_transcriptController.isClosed) {
-      _transcriptController.add(event);
-    }
-  }
 
   void _emitEvent(SttEvent event) {
     if (!_disposed && !_eventController.isClosed) {
@@ -137,7 +129,6 @@ class DeepgramStt {
     _healthTimer?.cancel();
     _reconnectTimer?.cancel();
     stop();
-    _transcriptController.close();
     _eventController.close();
     _stateController.close();
   }
@@ -181,7 +172,6 @@ class DeepgramStt {
 
       if (_isReconnecting) {
         _isReconnecting = false;
-        _emit('__RECONNECTED__'); // legacy
         _emitEvent(const SttReconnected());
       }
     } catch (e) {
@@ -273,19 +263,17 @@ class DeepgramStt {
   void _scheduleReconnect() {
     if (_isReconnecting || !_sessionActive || _disposed) return;
 
-    // Give up after kMaxReconnectAttempts — emit a fatal sentinel so the
-    // voice screen surfaces an actionable error instead of spinning forever.
+    // Give up after kMaxReconnectAttempts and surface a typed fatal event so
+    // voice UI can show actionable recovery instead of spinning forever.
     if (_reconnectAttempts >= kMaxReconnectAttempts) {
       _sessionActive = false;
       _setState(SttState.error);
-      _emit('__STT_FAILED__'); // legacy
       _emitEvent(const SttFailed());
       return;
     }
 
     _isReconnecting = true;
     _setState(SttState.reconnecting);
-    _emit('__RECONNECTING__'); // legacy
     _emitEvent(const SttReconnecting());
 
     // Exponential backoff: 1s, 2s, 4s, 8s, 16s — then gives up
@@ -337,7 +325,6 @@ class DeepgramStt {
               ? DateTime.now().difference(start).inMilliseconds
               : 9999;
           if (elapsed > 700) {
-            _emit('__SPEECH_STARTED__'); // legacy
             _emitEvent(const SttSpeechStarted());
           }
         }
@@ -360,13 +347,11 @@ class DeepgramStt {
         }
 
         if (transcript.isNotEmpty && !isFinal) {
-          _emit('[$transcript]'); // legacy
           _emitEvent(SttTranscriptPartial(transcript));
         }
 
         if (isFinal && transcript.isNotEmpty) {
           _finalBuffer.add(transcript);
-          _emit(transcript); // legacy
           _emitEvent(SttTranscriptFinal(transcript));
         }
 
@@ -389,7 +374,6 @@ class DeepgramStt {
     final full = _finalBuffer.join(' ').trim();
     _finalBuffer.clear();
     if (full.isNotEmpty) {
-      _emit('__SPEECH_FINAL__:$full'); // legacy
       _emitEvent(SttSpeechFinal(full));
     }
   }
