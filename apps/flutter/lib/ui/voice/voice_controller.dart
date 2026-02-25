@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../services/deepgram_stt.dart';
 import '../../services/elevenlabs_tts.dart';
 import '../../services/openclaw_client.dart';
+import '../../services/stt_events.dart';
 import 'voice_error.dart';
 import 'voice_models.dart';
 
@@ -26,109 +27,86 @@ class VoiceController {
   final VoiceToastCallback? onToast;
 
   bool _processingTurn = false;
-  String _lastHeardTranscript = '';
-  StreamSubscription<String>? _transcriptSub;
+  StreamSubscription<SttEvent>? _sttEventSub;
 
   void _setState(VoiceViewState next) {
     state.value = next;
   }
 
   void _listenToStt() {
-    _transcriptSub = _stt.transcripts.listen((event) async {
+    _sttEventSub = _stt.events.listen((event) async {
       final current = state.value;
 
-      if (event == '__RECONNECTING__') {
-        if (current.voiceState != VoiceState.idle) {
+      switch (event) {
+        case SttReconnecting():
+          if (current.voiceState != VoiceState.idle) {
+            _setState(
+              current.copyWith(
+                voiceState: VoiceState.reconnecting,
+                statusText: 'Reconnecting...',
+              ),
+            );
+          }
+          return;
+
+        case SttReconnected():
+          if (current.voiceState != VoiceState.idle) {
+            _setState(
+              current.copyWith(
+                voiceState: VoiceState.listening,
+                statusText: 'Listening...',
+              ),
+            );
+            onToast?.call('Back online ✓', isError: false);
+          }
+          return;
+
+        case SttFailed():
+          const err = OcError(
+            message: 'Speech recognition unavailable',
+            hint: 'Deepgram couldn\'t reconnect. Check your key in Settings.',
+            needsSettings: true,
+            fatal: true,
+          );
           _setState(
-            current.copyWith(
-              voiceState: VoiceState.reconnecting,
-              statusText: 'Reconnecting...',
+            state.value.copyWith(
+              voiceState: VoiceState.error,
+              statusText: err.message,
+              errorInfo: err,
             ),
           );
-        }
-        return;
-      }
+          return;
 
-      if (event == '__RECONNECTED__') {
-        if (current.voiceState != VoiceState.idle) {
+        case SttSpeechStarted():
+          if (state.value.voiceState == VoiceState.speaking) {
+            await _handleBargeIn();
+          }
+          return;
+
+        case SttSpeechFinal(text: final text):
+          if (_processingTurn) return;
+          final clean = text.trim();
+          if (clean.isEmpty) return;
+
           _setState(
-            current.copyWith(
-              voiceState: VoiceState.listening,
-              statusText: 'Listening...',
+            state.value.copyWith(
+              transcript: clean,
+              voiceState: VoiceState.thinking,
+              statusText: 'Thinking...',
             ),
           );
-          onToast?.call('Back online ✓', isError: false);
-        }
-        return;
-      }
+          await _runLlmAndSpeak(clean);
+          return;
 
-      if (event == '__STT_FAILED__') {
-        const err = OcError(
-          message: 'Speech recognition unavailable',
-          hint: 'Deepgram couldn\'t reconnect. Check your key in Settings.',
-          needsSettings: true,
-          fatal: true,
-        );
-        _setState(
-          state.value.copyWith(
-            voiceState: VoiceState.error,
-            statusText: err.message,
-            errorInfo: err,
-          ),
-        );
-        return;
-      }
+        case SttTranscriptPartial(text: final text):
+          if (_processingTurn) return;
+          _setState(state.value.copyWith(transcript: text));
+          return;
 
-      if (event == '__SPEECH_STARTED__') {
-        if (state.value.voiceState == VoiceState.speaking) {
-          await _handleBargeIn();
-        }
-        return;
-      }
-
-      if (event.startsWith('__SPEECH_FINAL__:')) {
-        if (_processingTurn) return;
-
-        final text = event.substring('__SPEECH_FINAL__:'.length).trim();
-        if (text.isEmpty) return;
-
-        _lastHeardTranscript = text;
-        _setState(
-          state.value.copyWith(
-            transcript: text,
-            voiceState: VoiceState.thinking,
-            statusText: 'Thinking...',
-          ),
-        );
-
-        await _runLlmAndSpeak(text);
-        return;
-      }
-
-      if (event == '__UTTERANCE_END__') {
-        if (_processingTurn) return;
-        final text = _lastHeardTranscript.trim();
-        if (text.isEmpty) return;
-
-        _setState(
-          state.value.copyWith(
-            voiceState: VoiceState.thinking,
-            statusText: 'Thinking...',
-          ),
-        );
-
-        await _runLlmAndSpeak(text);
-        return;
-      }
-
-      if (!event.startsWith('__')) {
-        final clean = event.startsWith('[')
-            ? event.substring(1, event.length - 1)
-            : event;
-        if (clean.isNotEmpty) _lastHeardTranscript = clean;
-
-        if (_processingTurn) return;
-        _setState(state.value.copyWith(transcript: clean));
+        case SttTranscriptFinal(text: final text):
+          if (_processingTurn) return;
+          _setState(state.value.copyWith(transcript: text));
+          return;
       }
     });
   }
@@ -161,7 +139,6 @@ class VoiceController {
         clearError: true,
       ),
     );
-    _lastHeardTranscript = '';
     _processingTurn = false;
 
     try {
@@ -183,7 +160,6 @@ class VoiceController {
     await _tts.stop();
     await _stt.stop();
     _llm.clearHistory();
-    _lastHeardTranscript = '';
 
     _setState(
       state.value.copyWith(
@@ -197,7 +173,6 @@ class VoiceController {
 
   Future<void> _runLlmAndSpeak(String userText) async {
     _processingTurn = true;
-    _lastHeardTranscript = '';
 
     try {
       final buffer = StringBuffer();
@@ -282,7 +257,7 @@ class VoiceController {
   }
 
   void dispose() {
-    _transcriptSub?.cancel();
+    _sttEventSub?.cancel();
     _stt.dispose();
     _tts.dispose();
     state.dispose();

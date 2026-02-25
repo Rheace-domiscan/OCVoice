@@ -9,6 +9,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'settings_service.dart';
+import 'stt_events.dart';
 
 enum SttState { idle, connecting, listening, reconnecting, error }
 
@@ -21,10 +22,12 @@ class DeepgramStt {
   Timer? _healthTimer;
 
   final _transcriptController = StreamController<String>.broadcast();
+  final _eventController = StreamController<SttEvent>.broadcast();
   final _stateController = StreamController<SttState>.broadcast();
   final List<String> _finalBuffer = [];
 
   Stream<String> get transcripts => _transcriptController.stream;
+  Stream<SttEvent> get events => _eventController.stream;
   Stream<SttState> get states => _stateController.stream;
 
   SttState _state = SttState.idle;
@@ -56,6 +59,12 @@ class DeepgramStt {
   void _emit(String event) {
     if (!_disposed && !_transcriptController.isClosed) {
       _transcriptController.add(event);
+    }
+  }
+
+  void _emitEvent(SttEvent event) {
+    if (!_disposed && !_eventController.isClosed) {
+      _eventController.add(event);
     }
   }
 
@@ -129,6 +138,7 @@ class DeepgramStt {
     _reconnectTimer?.cancel();
     stop();
     _transcriptController.close();
+    _eventController.close();
     _stateController.close();
   }
 
@@ -171,7 +181,8 @@ class DeepgramStt {
 
       if (_isReconnecting) {
         _isReconnecting = false;
-        _emit('__RECONNECTED__');
+        _emit('__RECONNECTED__'); // legacy
+        _emitEvent(const SttReconnected());
       }
     } catch (e) {
       if (_sessionActive && !_disposed) {
@@ -267,13 +278,15 @@ class DeepgramStt {
     if (_reconnectAttempts >= kMaxReconnectAttempts) {
       _sessionActive = false;
       _setState(SttState.error);
-      _emit('__STT_FAILED__');
+      _emit('__STT_FAILED__'); // legacy
+      _emitEvent(const SttFailed());
       return;
     }
 
     _isReconnecting = true;
     _setState(SttState.reconnecting);
-    _emit('__RECONNECTING__');
+    _emit('__RECONNECTING__'); // legacy
+    _emitEvent(const SttReconnecting());
 
     // Exponential backoff: 1s, 2s, 4s, 8s, 16s — then gives up
     final delaySec = math.min(30, math.pow(2, _reconnectAttempts).toInt());
@@ -324,7 +337,8 @@ class DeepgramStt {
               ? DateTime.now().difference(start).inMilliseconds
               : 9999;
           if (elapsed > 700) {
-            _emit('__SPEECH_STARTED__');
+            _emit('__SPEECH_STARTED__'); // legacy
+            _emitEvent(const SttSpeechStarted());
           }
         }
         return;
@@ -346,12 +360,14 @@ class DeepgramStt {
         }
 
         if (transcript.isNotEmpty && !isFinal) {
-          _emit('[$transcript]');
+          _emit('[$transcript]'); // legacy
+          _emitEvent(SttTranscriptPartial(transcript));
         }
 
         if (isFinal && transcript.isNotEmpty) {
           _finalBuffer.add(transcript);
-          _emit(transcript);
+          _emit(transcript); // legacy
+          _emitEvent(SttTranscriptFinal(transcript));
         }
 
         if (speechFinal && transcript.isNotEmpty) {
@@ -373,7 +389,8 @@ class DeepgramStt {
     final full = _finalBuffer.join(' ').trim();
     _finalBuffer.clear();
     if (full.isNotEmpty) {
-      _emit('__SPEECH_FINAL__:$full');
+      _emit('__SPEECH_FINAL__:$full'); // legacy
+      _emitEvent(SttSpeechFinal(full));
     }
   }
 }
