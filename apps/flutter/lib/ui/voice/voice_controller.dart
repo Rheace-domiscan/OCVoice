@@ -230,13 +230,10 @@ class VoiceController {
       );
 
       _stt.muteMic();
-      try {
-        await _tts.speak(response);
-      } finally {
-        _stt.unmuteMic();
-      }
+      await _tts.speak(response);
 
       if (state.value.voiceState == VoiceState.speaking) {
+        _bargeInCandidate = false;
         _setState(
           state.value.copyWith(
             voiceState: VoiceState.listening,
@@ -245,7 +242,11 @@ class VoiceController {
           ),
         );
       }
+      _stt.unmuteMic();
     } catch (e) {
+      try {
+        _stt.unmuteMic();
+      } catch (_) {}
       debugPrint('VoiceController pipeline error: $e');
       final err = classifyError(e);
       if (err.fatal) {
