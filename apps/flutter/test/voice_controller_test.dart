@@ -108,6 +108,27 @@ void main() {
       controller.dispose();
     });
 
+    test(
+      'startSession failure classifies mic permission denied as fatal error',
+      () async {
+        final stt = FakeStt()
+          ..startError = Exception('Microphone permission denied');
+        final controller = VoiceController(
+          stt: stt,
+          llm: FakeLlm(),
+          tts: FakeTts(),
+        );
+
+        await controller.startSession();
+
+        expect(controller.state.value.voiceState, VoiceState.error);
+        expect(controller.state.value.statusText, 'Mic access denied');
+        expect(controller.state.value.errorInfo?.fatal, true);
+        expect(controller.state.value.errorInfo?.needsSettings, false);
+        controller.dispose();
+      },
+    );
+
     test('reconnect events update state and emit toast callback', () async {
       final stt = FakeStt();
       String? toast;
