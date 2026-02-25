@@ -45,9 +45,13 @@ class FakeStt implements SttService {
 class FakeLlm implements LlmService {
   List<String> updates = [];
   String response = 'Hello from LLM';
+  Duration chatDelay = Duration.zero;
 
   @override
   Stream<String> chat(String userMessage) async* {
+    if (chatDelay > Duration.zero) {
+      await Future<void>.delayed(chatDelay);
+    }
     yield response;
   }
 
@@ -185,6 +189,57 @@ void main() {
         contains('rejected'),
       );
       expect(stt.stopped, true);
+      controller.dispose();
+    });
+
+    test('transient TTS error shows toast and returns to listening', () async {
+      final stt = FakeStt();
+      final llm = FakeLlm();
+      final tts = FakeTts()..speakError = Exception('tts error timeout');
+      String? toast;
+      bool? toastIsError;
+
+      final controller = VoiceController(
+        stt: stt,
+        llm: llm,
+        tts: tts,
+        onToast: (msg, {isError = false}) {
+          toast = msg;
+          toastIsError = isError;
+        },
+      );
+
+      await controller.startSession();
+      stt.emit(const SttSpeechFinal('say hi'));
+      await _tick();
+      await _tick();
+
+      expect(controller.state.value.voiceState, VoiceState.listening);
+      expect(toast, isNotNull);
+      expect(toastIsError, true);
+      expect(stt.stopped, false);
+      controller.dispose();
+    });
+
+    test('ignores new speech final while processing a turn', () async {
+      final stt = FakeStt();
+      final llm = FakeLlm()
+        ..response = 'slow response'
+        ..chatDelay = const Duration(milliseconds: 80);
+      final tts = FakeTts();
+      final controller = VoiceController(stt: stt, llm: llm, tts: tts);
+
+      await controller.startSession();
+      stt.emit(const SttSpeechFinal('first request'));
+      await _tick();
+
+      // Should be ignored because processing is active.
+      stt.emit(const SttSpeechFinal('second request'));
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      expect(tts.speakCalled, true);
+      expect(controller.state.value.lastResponse, 'slow response');
+      expect(controller.state.value.voiceState, VoiceState.listening);
       controller.dispose();
     });
   });
