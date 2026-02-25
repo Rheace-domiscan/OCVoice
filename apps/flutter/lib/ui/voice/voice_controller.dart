@@ -216,6 +216,7 @@ class VoiceController {
         );
       }
     } catch (e) {
+      debugPrint('VoiceController pipeline error: $e');
       final err = classifyError(e);
       if (err.fatal) {
         await _stt.stop();
@@ -227,7 +228,11 @@ class VoiceController {
           ),
         );
       } else {
-        onToast?.call(err.message, isError: true);
+        final toastText =
+            (err.message == 'Something went wrong' && err.hint != null)
+            ? err.hint!
+            : err.message;
+        onToast?.call(toastText, isError: true);
         _setState(
           state.value.copyWith(
             voiceState: VoiceState.listening,

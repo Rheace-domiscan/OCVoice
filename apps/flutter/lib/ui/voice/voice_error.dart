@@ -102,11 +102,12 @@ OcError classifyError(dynamic e) {
     );
   }
 
-  // Unknown — show abbreviated message
-  final raw = e.toString();
+  // Unknown — surface a short technical reason for faster diagnosis.
+  final raw = e.toString().replaceAll('\n', ' ').trim();
+  final short = raw.length > 140 ? '${raw.substring(0, 140)}…' : raw;
   return OcError(
     message: 'Something went wrong',
-    hint: raw.length <= 80 ? raw : null,
+    hint: short.isEmpty ? null : short,
     fatal: false,
   );
 }
