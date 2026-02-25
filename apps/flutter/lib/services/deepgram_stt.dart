@@ -10,10 +10,11 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'settings_service.dart';
 import 'stt_events.dart';
+import 'voice_ports.dart';
 
 enum SttState { idle, connecting, listening, reconnecting, error }
 
-class DeepgramStt {
+class DeepgramStt implements SttService {
   WebSocket? _ws;
   WebSocketChannel? _channel;
   AudioRecorder? _recorder;
@@ -25,6 +26,7 @@ class DeepgramStt {
   final _stateController = StreamController<SttState>.broadcast();
   final List<String> _finalBuffer = [];
 
+  @override
   Stream<SttEvent> get events => _eventController.stream;
   Stream<SttState> get states => _stateController.stream;
 
@@ -69,6 +71,7 @@ class DeepgramStt {
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
+  @override
   Future<void> start() async {
     if (_sessionActive) return;
     _sessionActive = true;
@@ -78,6 +81,7 @@ class DeepgramStt {
     await _connect();
   }
 
+  @override
   void muteMic() {
     _micMuted = true;
     _suppressUntil = null;
@@ -85,6 +89,7 @@ class DeepgramStt {
     _finalBuffer.clear();
   }
 
+  @override
   void unmuteMic() {
     // If bargeIn() was already called, _micMuted is already false.
     // Don't re-apply the grace period — that would suppress the user's barge-in
@@ -103,6 +108,7 @@ class DeepgramStt {
 
   /// Called on barge-in: skip the grace period and immediately accept speech.
   /// Audio was always flowing to Deepgram — it has the user's words buffered.
+  @override
   void bargeIn() {
     _micMuted = false;
     _suppressUntil = null;
@@ -110,6 +116,7 @@ class DeepgramStt {
     _finalBuffer.clear();
   }
 
+  @override
   Future<void> stop() async {
     _sessionActive = false;
     _isReconnecting = false;
@@ -124,6 +131,7 @@ class DeepgramStt {
     _setState(SttState.idle);
   }
 
+  @override
   void dispose() {
     _disposed = true;
     _healthTimer?.cancel();

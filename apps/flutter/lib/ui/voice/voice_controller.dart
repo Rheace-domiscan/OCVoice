@@ -6,19 +6,27 @@ import '../../services/deepgram_stt.dart';
 import '../../services/elevenlabs_tts.dart';
 import '../../services/openclaw_client.dart';
 import '../../services/stt_events.dart';
+import '../../services/voice_ports.dart';
 import 'voice_error.dart';
 import 'voice_models.dart';
 
 typedef VoiceToastCallback = void Function(String message, {bool isError});
 
 class VoiceController {
-  VoiceController({this.onToast}) {
+  VoiceController({
+    this.onToast,
+    SttService? stt,
+    LlmService? llm,
+    TtsService? tts,
+  }) : _stt = stt ?? DeepgramStt(),
+       _llm = llm ?? OpenClawClient(),
+       _tts = tts ?? ElevenLabsTts() {
     _listenToStt();
   }
 
-  final DeepgramStt _stt = DeepgramStt();
-  final OpenClawClient _llm = OpenClawClient();
-  final ElevenLabsTts _tts = ElevenLabsTts();
+  final SttService _stt;
+  final LlmService _llm;
+  final TtsService _tts;
 
   final ValueNotifier<VoiceViewState> state = ValueNotifier(
     VoiceViewState.initial(),

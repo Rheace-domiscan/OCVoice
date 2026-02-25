@@ -6,8 +6,9 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'settings_service.dart';
+import 'voice_ports.dart';
 
-class ElevenLabsTts {
+class ElevenLabsTts implements TtsService {
   final AudioPlayer _player = AudioPlayer();
   bool _isSpeaking = false;
 
@@ -17,6 +18,7 @@ class ElevenLabsTts {
 
   /// Speak the given text using ElevenLabs streaming TTS.
   /// Returns when playback is complete.
+  @override
   Future<void> speak(String text) async {
     if (text.trim().isEmpty) return;
     _isSpeaking = true;
@@ -30,6 +32,7 @@ class ElevenLabsTts {
   }
 
   /// Stop any current playback immediately (hard stop).
+  @override
   Future<void> stop() async {
     await _player.stop();
     await _player.setVolume(1.0); // reset for next play
@@ -38,6 +41,7 @@ class ElevenLabsTts {
 
   /// Graceful stop: fade volume to 0 over ~150ms then stop.
   /// Used on barge-in so the cut feels like being heard, not cut off.
+  @override
   Future<void> fadeAndStop() async {
     if (!_isSpeaking) return;
     try {
@@ -61,7 +65,8 @@ class ElevenLabsTts {
         'Content-Type': 'application/json',
         'Accept': 'audio/mpeg',
       },
-      body: '''
+      body:
+          '''
 {
   "text": ${_jsonString(text)},
   "model_id": "eleven_turbo_v2_5",
@@ -123,6 +128,7 @@ class ElevenLabsTts {
     return '"${s.replaceAll(r'\', r'\\').replaceAll('"', r'\"').replaceAll('\n', r'\n')}"';
   }
 
+  @override
   void dispose() {
     _player.dispose();
   }

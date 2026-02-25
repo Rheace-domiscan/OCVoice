@@ -5,8 +5,9 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 
 import 'settings_service.dart';
+import 'voice_ports.dart';
 
-class OpenClawClient {
+class OpenClawClient implements LlmService {
   // ── Context window config ──────────────────────────────────────────────────
   // Voice exchanges are short (~100 tokens each) but we still cap the window
   // to control cost and keep LLM responses fast.
@@ -17,7 +18,7 @@ class OpenClawClient {
   //
   // At ~100 tokens/message average:
   //   20 messages ≈ 2000 tokens history + ~50 system + response budget
-  static const int kMaxMessages   = 20; // total history entries to keep
+  static const int kMaxMessages = 20; // total history entries to keep
   static const int kAnchorMessages = 2; // first N entries always preserved
 
   final List<Map<String, String>> _history = [];
@@ -39,6 +40,7 @@ class OpenClawClient {
   // ── Public API ─────────────────────────────────────────────────────────────
 
   /// Send a user message and stream the assistant's response text.
+  @override
   Stream<String> chat(String userMessage) async* {
     _history.add({'role': 'user', 'content': userMessage});
 
@@ -50,7 +52,8 @@ class OpenClawClient {
     final messages = [
       {
         'role': 'system',
-        'content': 'You are a voice assistant powered by OpenClaw. '
+        'content':
+            'You are a voice assistant powered by OpenClaw. '
             'Be concise — your responses will be spoken aloud. '
             'Avoid markdown, bullet points, or formatting. '
             'Respond in natural spoken language.',
@@ -77,9 +80,10 @@ class OpenClawClient {
 
     final buffer = StringBuffer();
 
-    await for (final chunk in response.stream
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())) {
+    await for (final chunk
+        in response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
       if (!chunk.startsWith('data: ')) continue;
       final payload = chunk.substring(6).trim();
       if (payload == '[DONE]') break;
@@ -99,11 +103,13 @@ class OpenClawClient {
     _history.add({'role': 'assistant', 'content': buffer.toString()});
   }
 
+  @override
   void clearHistory() => _history.clear();
 
   /// Patch the last assistant message in history.
   /// Called on barge-in: appends '[interrupted by user]' so the LLM has
   /// full conversational context and can respond naturally to the cut-in.
+  @override
   void updateLastAssistantMessage(String text) {
     for (int i = _history.length - 1; i >= 0; i--) {
       if (_history[i]['role'] == 'assistant') {
@@ -140,7 +146,7 @@ class OpenClawClient {
     if (_history.length <= kMaxMessages) return;
 
     final anchor = _history.take(kAnchorMessages).toList();
-    final tail   = _history.skip(kAnchorMessages).toList();
+    final tail = _history.skip(kAnchorMessages).toList();
 
     final keepFromTail = kMaxMessages - kAnchorMessages;
     final trimmed = tail.length > keepFromTail
