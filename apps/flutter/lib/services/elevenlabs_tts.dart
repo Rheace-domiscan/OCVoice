@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -9,7 +9,7 @@ import 'settings_service.dart';
 import 'voice_ports.dart';
 
 class ElevenLabsTts implements TtsService {
-  final AudioPlayer _player = AudioPlayer();
+  AudioPlayer _player = AudioPlayer();
   bool _isSpeaking = false;
 
   bool get isSpeaking => _isSpeaking;
@@ -106,16 +106,31 @@ class ElevenLabsTts implements TtsService {
     await file.create(recursive: true);
     await file.writeAsBytes(bytes, flush: true);
 
-    await _player.setFilePath(file.path);
-    // Subscribe BEFORE play() to avoid race condition on short audio.
-    // Also accept idle: when stopped externally (e.g. barge-in fadeAndStop),
-    // just_audio transitions to idle not completed — without this the future
-    // would hang forever and block the voice turn pipeline.
-    final completion = _player.processingStateStream.firstWhere(
-      (s) => s == ProcessingState.completed || s == ProcessingState.idle,
-    );
-    await _player.play();
-    await completion;
+    Future<void> playOnce() async {
+      await _player.setFilePath(file.path);
+      // Subscribe BEFORE play() to avoid race condition on short audio.
+      // Also accept idle: when stopped externally (e.g. barge-in fadeAndStop),
+      // just_audio transitions to idle not completed — without this the future
+      // would hang forever and block the voice turn pipeline.
+      final completion = _player.processingStateStream.firstWhere(
+        (s) => s == ProcessingState.completed || s == ProcessingState.idle,
+      );
+      await _player.play();
+      await completion;
+    }
+
+    try {
+      await playOnce();
+    } on PlatformException catch (e) {
+      // iOS can occasionally leave AVAudioSession/player in a bad state after
+      // sleep/background transitions. Recreate player and retry once.
+      if (e.code.toString() == '561017449') {
+        await _resetPlayer();
+        await playOnce();
+      } else {
+        rethrow;
+      }
+    }
 
     // Clean up temp file
     try {
@@ -126,6 +141,13 @@ class ElevenLabsTts implements TtsService {
   /// Safely JSON-encode a string value.
   String _jsonString(String s) {
     return '"${s.replaceAll(r'\', r'\\').replaceAll('"', r'\"').replaceAll('\n', r'\n')}"';
+  }
+
+  Future<void> _resetPlayer() async {
+    try {
+      await _player.dispose();
+    } catch (_) {}
+    _player = AudioPlayer();
   }
 
   @override
