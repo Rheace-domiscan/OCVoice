@@ -81,8 +81,7 @@ OcError classifyError(dynamic e) {
   }
 
   // STT gave up after max reconnect attempts
-  if (s.contains('__stt_failed__') ||
-      (s.contains('deepgram') && s.contains('fail'))) {
+  if (s.contains('deepgram') && s.contains('fail')) {
     return const OcError(
       message: 'Speech recognition unavailable',
       hint: 'Check your Deepgram key in Settings',
