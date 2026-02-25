@@ -359,8 +359,20 @@ class DeepgramStt implements SttService {
         final isFinal = json['is_final'] as bool? ?? false;
         final speechFinal = json['speech_final'] as bool? ?? false;
 
-        // Drop all transcript events when suppressed (muted or grace period).
+        // While fully suppressed, drop transcript events.
+        // Exception: when mic is muted for TTS, allow partials after the
+        // barge-in gate so controller can verify real user speech vs echo.
         if (_isSuppressed) {
+          if (_micMuted) {
+            final start = _muteStart;
+            final elapsed = start != null
+                ? DateTime.now().difference(start).inMilliseconds
+                : 9999;
+            const minBargeInMs = 1200;
+            if (elapsed > minBargeInMs && transcript.isNotEmpty && !isFinal) {
+              _emitEvent(SttTranscriptPartial(transcript));
+            }
+          }
           if (speechFinal || isFinal) _finalBuffer.clear();
           return;
         }
