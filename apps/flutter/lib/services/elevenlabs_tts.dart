@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
@@ -23,6 +24,7 @@ class ElevenLabsTts implements TtsService {
     _isSpeaking = true;
 
     try {
+      await _configurePlaybackSession();
       final bytes = await _fetchAudio(text);
       await _resetPlayer();
       final player = _player!;
@@ -149,6 +151,13 @@ class ElevenLabsTts implements TtsService {
     final code = e.code.toString();
     final msg = (e.message ?? '').toLowerCase();
     return code == '561017449' || msg.contains('osstatus error 561017449');
+  }
+
+  Future<void> _configurePlaybackSession() async {
+    if (!Platform.isIOS) return;
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration.speech());
+    await session.setActive(true);
   }
 
   Future<void> _resetPlayer() async {
