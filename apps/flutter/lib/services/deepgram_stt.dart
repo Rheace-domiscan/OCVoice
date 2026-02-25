@@ -47,6 +47,7 @@ class DeepgramStt implements SttService {
   bool get isMicMuted => _micMuted;
   DateTime? _suppressUntil;
   DateTime? _muteStart; // tracks when TTS started for barge-in timing gate
+  DateTime? _lastSpeechStartedEmit;
 
   bool get _isSuppressed {
     if (_micMuted) return true;
@@ -86,6 +87,7 @@ class DeepgramStt implements SttService {
     _micMuted = true;
     _suppressUntil = null;
     _muteStart = DateTime.now(); // record when TTS began for timing gate
+    _lastSpeechStartedEmit = null;
     _finalBuffer.clear();
   }
 
@@ -113,6 +115,7 @@ class DeepgramStt implements SttService {
     _micMuted = false;
     _suppressUntil = null;
     _muteStart = null;
+    _lastSpeechStartedEmit = null;
     _finalBuffer.clear();
   }
 
@@ -127,6 +130,7 @@ class DeepgramStt implements SttService {
     _micMuted = false;
     _suppressUntil = null;
     _muteStart = null;
+    _lastSpeechStartedEmit = null;
     await _teardownAll();
     _setState(SttState.idle);
   }
@@ -332,7 +336,14 @@ class DeepgramStt implements SttService {
           final elapsed = start != null
               ? DateTime.now().difference(start).inMilliseconds
               : 9999;
-          if (elapsed > 700) {
+          const minBargeInMs = 1200;
+          final now = DateTime.now();
+          final last = _lastSpeechStartedEmit;
+          final recentlyTriggered =
+              last != null && now.difference(last).inMilliseconds < 1500;
+
+          if (elapsed > minBargeInMs && !recentlyTriggered) {
+            _lastSpeechStartedEmit = now;
             _emitEvent(const SttSpeechStarted());
           }
         }

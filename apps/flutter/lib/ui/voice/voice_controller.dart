@@ -13,6 +13,8 @@ import 'voice_models.dart';
 typedef VoiceToastCallback = void Function(String message, {bool isError});
 
 class VoiceController {
+  static final RegExp _speechChars = RegExp(r'[A-Za-z]{3,}');
+
   VoiceController({
     this.onToast,
     SttService? stt,
@@ -39,6 +41,12 @@ class VoiceController {
 
   void _setState(VoiceViewState next) {
     state.value = next;
+  }
+
+  bool _looksLikeSpeech(String text) {
+    final normalized = text.trim();
+    if (normalized.length < 3) return false;
+    return _speechChars.hasMatch(normalized);
   }
 
   void _listenToStt() {
@@ -94,7 +102,7 @@ class VoiceController {
         case SttSpeechFinal(text: final text):
           if (_processingTurn) return;
           final clean = text.trim();
-          if (clean.isEmpty) return;
+          if (clean.isEmpty || !_looksLikeSpeech(clean)) return;
 
           _setState(
             state.value.copyWith(
