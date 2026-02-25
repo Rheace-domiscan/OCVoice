@@ -37,6 +37,7 @@ class VoiceController {
   final VoiceToastCallback? onToast;
 
   bool _processingTurn = false;
+  bool _bargeInCandidate = false;
   StreamSubscription<SttEvent>? _sttEventSub;
 
   void _setState(VoiceViewState next) {
@@ -47,6 +48,14 @@ class VoiceController {
     final normalized = text.trim();
     if (normalized.length < 3) return false;
     return _speechChars.hasMatch(normalized);
+  }
+
+  bool _isLikelyEcho(String transcript, String assistantText) {
+    final t = transcript.toLowerCase().trim();
+    final a = assistantText.toLowerCase().trim();
+    if (t.isEmpty || a.isEmpty) return false;
+    if (t.length < 6) return false;
+    return a.contains(t);
   }
 
   void _listenToStt() {
@@ -94,7 +103,8 @@ class VoiceController {
           return;
 
         case SttSpeechStarted():
-          if (state.value.voiceState == VoiceState.speaking) {
+          if (state.value.voiceState == VoiceState.speaking &&
+              _bargeInCandidate) {
             await _handleBargeIn();
           }
           return;
@@ -115,6 +125,15 @@ class VoiceController {
           return;
 
         case SttTranscriptPartial(text: final text):
+          final partial = text.trim();
+          final speakingNow = state.value.voiceState == VoiceState.speaking;
+          if (speakingNow) {
+            if (_looksLikeSpeech(partial) &&
+                !_isLikelyEcho(partial, state.value.lastResponse)) {
+              _bargeInCandidate = true;
+            }
+            return;
+          }
           if (_processingTurn) return;
           _setState(state.value.copyWith(transcript: text));
           return;
@@ -156,6 +175,7 @@ class VoiceController {
       ),
     );
     _processingTurn = false;
+    _bargeInCandidate = false;
 
     try {
       await _stt.start();
@@ -173,6 +193,7 @@ class VoiceController {
 
   Future<void> stopSession() async {
     _processingTurn = false;
+    _bargeInCandidate = false;
     await _tts.stop();
     await _stt.stop();
     _llm.clearHistory();
@@ -199,6 +220,7 @@ class VoiceController {
       final response = buffer.toString().trim();
       if (response.isEmpty) return;
 
+      _bargeInCandidate = false;
       _setState(
         state.value.copyWith(
           lastResponse: response,
@@ -258,6 +280,7 @@ class VoiceController {
     if (current.voiceState != VoiceState.speaking) return;
 
     _processingTurn = false;
+    _bargeInCandidate = false;
 
     if (current.lastResponse.isNotEmpty) {
       _llm.updateLastAssistantMessage(

@@ -182,6 +182,7 @@ void main() {
       await controller.startSession();
       stt.emit(const SttSpeechFinal('Tell me a story'));
       await _tick();
+      stt.emit(const SttTranscriptPartial('wait stop'));
       stt.emit(const SttSpeechStarted());
       await _tick();
 
