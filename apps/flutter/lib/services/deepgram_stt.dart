@@ -92,9 +92,10 @@ class DeepgramStt {
     _micMuted = false;
     _muteStart = null;
 
-    // Desktop leaks a longer tail of speaker audio (no reliable hardware AEC in
-    // unsigned debug builds), so keep suppression longer there.
-    final graceMs = (Platform.isMacOS || Platform.isWindows) ? 1500 : 800;
+    // Desktop leaks a much longer tail of speaker audio (no reliable hardware
+    // AEC in unsigned debug builds). Use a stronger quarantine window there.
+    // Mobile keeps the shorter window for responsiveness.
+    final graceMs = (Platform.isMacOS || Platform.isWindows) ? 4500 : 800;
     _suppressUntil = DateTime.now().add(Duration(milliseconds: graceMs));
     _finalBuffer.clear();
   }
