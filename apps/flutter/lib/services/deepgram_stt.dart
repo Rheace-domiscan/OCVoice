@@ -91,8 +91,11 @@ class DeepgramStt {
     if (!_micMuted) return;
     _micMuted = false;
     _muteStart = null;
-    // 800ms grace: ignore any Deepgram frames still in flight from TTS echo
-    _suppressUntil = DateTime.now().add(const Duration(milliseconds: 800));
+
+    // Desktop leaks a longer tail of speaker audio (no reliable hardware AEC in
+    // unsigned debug builds), so keep suppression longer there.
+    final graceMs = (Platform.isMacOS || Platform.isWindows) ? 1500 : 800;
+    _suppressUntil = DateTime.now().add(Duration(milliseconds: graceMs));
     _finalBuffer.clear();
   }
 
@@ -136,13 +139,14 @@ class DeepgramStt {
     _setState(SttState.connecting);
     try {
       final s = SettingsService.instance;
-      final ws = await WebSocket.connect(
-        s.deepgramWsUrl,
-        headers: {'Authorization': 'Token ${s.deepgramKey}'},
-      ).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () => throw Exception('Deepgram connection timed out'),
-      );
+      final ws =
+          await WebSocket.connect(
+            s.deepgramWsUrl,
+            headers: {'Authorization': 'Token ${s.deepgramKey}'},
+          ).timeout(
+            const Duration(seconds: 10),
+            onTimeout: () => throw Exception('Deepgram connection timed out'),
+          );
 
       if (!_sessionActive || _disposed) {
         ws.close();
