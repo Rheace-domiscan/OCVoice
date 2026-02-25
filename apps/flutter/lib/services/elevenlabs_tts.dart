@@ -25,7 +25,16 @@ class ElevenLabsTts implements TtsService {
 
     try {
       final bytes = await _fetchAudio(text);
-      await _playBytes(bytes);
+      try {
+        await _playBytes(bytes);
+      } on PlatformException catch (e) {
+        if (_isIosAudioSessionError(e)) {
+          await _resetPlayer();
+          await _playBytes(bytes);
+        } else {
+          rethrow;
+        }
+      }
     } finally {
       _isSpeaking = false;
     }
@@ -34,8 +43,16 @@ class ElevenLabsTts implements TtsService {
   /// Stop any current playback immediately (hard stop).
   @override
   Future<void> stop() async {
-    await _player.stop();
-    await _player.setVolume(1.0); // reset for next play
+    try {
+      await _player.stop();
+      await _player.setVolume(1.0); // reset for next play
+    } on PlatformException catch (e) {
+      if (_isIosAudioSessionError(e)) {
+        await _resetPlayer();
+      } else {
+        rethrow;
+      }
+    }
     _isSpeaking = false;
   }
 
@@ -51,8 +68,16 @@ class ElevenLabsTts implements TtsService {
         await Future.delayed(const Duration(milliseconds: 25));
       }
     } catch (_) {}
-    await _player.stop();
-    await _player.setVolume(1.0); // reset for next play
+    try {
+      await _player.stop();
+      await _player.setVolume(1.0); // reset for next play
+    } on PlatformException catch (e) {
+      if (_isIosAudioSessionError(e)) {
+        await _resetPlayer();
+      } else {
+        rethrow;
+      }
+    }
     _isSpeaking = false;
   }
 
@@ -124,7 +149,7 @@ class ElevenLabsTts implements TtsService {
     } on PlatformException catch (e) {
       // iOS can occasionally leave AVAudioSession/player in a bad state after
       // sleep/background transitions. Recreate player and retry once.
-      if (e.code.toString() == '561017449') {
+      if (_isIosAudioSessionError(e)) {
         await _resetPlayer();
         await playOnce();
       } else {
@@ -141,6 +166,12 @@ class ElevenLabsTts implements TtsService {
   /// Safely JSON-encode a string value.
   String _jsonString(String s) {
     return '"${s.replaceAll(r'\', r'\\').replaceAll('"', r'\"').replaceAll('\n', r'\n')}"';
+  }
+
+  bool _isIosAudioSessionError(PlatformException e) {
+    final code = e.code.toString();
+    final msg = (e.message ?? '').toLowerCase();
+    return code == '561017449' || msg.contains('osstatus error 561017449');
   }
 
   Future<void> _resetPlayer() async {
