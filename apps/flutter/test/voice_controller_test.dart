@@ -242,5 +242,26 @@ void main() {
       expect(controller.state.value.voiceState, VoiceState.listening);
       controller.dispose();
     });
+
+    test('stt failed event transitions to actionable error state', () async {
+      final stt = FakeStt();
+      final controller = VoiceController(
+        stt: stt,
+        llm: FakeLlm(),
+        tts: FakeTts(),
+      );
+
+      await controller.startSession();
+      stt.emit(const SttFailed());
+      await _tick();
+
+      expect(controller.state.value.voiceState, VoiceState.error);
+      expect(
+        controller.state.value.statusText,
+        'Speech recognition unavailable',
+      );
+      expect(controller.state.value.errorInfo?.needsSettings, true);
+      controller.dispose();
+    });
   });
 }
