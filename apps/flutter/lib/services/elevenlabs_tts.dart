@@ -9,15 +9,14 @@ import 'settings_service.dart';
 import 'voice_ports.dart';
 
 class ElevenLabsTts implements TtsService {
-  AudioPlayer _player = AudioPlayer();
+  AudioPlayer? _player;
   bool _isSpeaking = false;
 
   bool get isSpeaking => _isSpeaking;
 
-  Stream<bool> get speakingStream => _player.playingStream;
+  Stream<bool> get speakingStream =>
+      _player?.playingStream ?? const Stream<bool>.empty();
 
-  /// Speak the given text using ElevenLabs streaming TTS.
-  /// Returns when playback is complete.
   @override
   Future<void> speak(String text) async {
     if (text.trim().isEmpty) return;
@@ -25,58 +24,44 @@ class ElevenLabsTts implements TtsService {
 
     try {
       final bytes = await _fetchAudio(text);
-      try {
-        await _playBytes(bytes);
-      } on PlatformException catch (e) {
-        if (_isIosAudioSessionError(e)) {
-          await _resetPlayer();
-          await _playBytes(bytes);
-        } else {
-          rethrow;
-        }
-      }
+      await _resetPlayer();
+      final player = _player!;
+      await _playBytes(player, bytes);
     } finally {
       _isSpeaking = false;
     }
   }
 
-  /// Stop any current playback immediately (hard stop).
   @override
   Future<void> stop() async {
+    final p = _player;
+    if (p == null) {
+      _isSpeaking = false;
+      return;
+    }
     try {
-      await _player.stop();
-      await _player.setVolume(1.0); // reset for next play
+      await p.stop();
     } on PlatformException catch (e) {
-      if (_isIosAudioSessionError(e)) {
-        await _resetPlayer();
-      } else {
-        rethrow;
-      }
+      if (!_isIosAudioSessionError(e)) rethrow;
     }
     _isSpeaking = false;
   }
 
-  /// Graceful stop: fade volume to 0 over ~150ms then stop.
-  /// Used on barge-in so the cut feels like being heard, not cut off.
   @override
   Future<void> fadeAndStop() async {
-    if (!_isSpeaking) return;
+    final p = _player;
+    if (!_isSpeaking || p == null) return;
     try {
-      // 6 steps × 25ms = 150ms total fade
       for (var v = 0.8; v >= 0; v -= 0.2) {
-        await _player.setVolume(v < 0 ? 0 : v);
+        await p.setVolume(v < 0 ? 0 : v);
         await Future.delayed(const Duration(milliseconds: 25));
       }
     } catch (_) {}
     try {
-      await _player.stop();
-      await _player.setVolume(1.0); // reset for next play
+      await p.stop();
+      await p.setVolume(1.0);
     } on PlatformException catch (e) {
-      if (_isIosAudioSessionError(e)) {
-        await _resetPlayer();
-      } else {
-        rethrow;
-      }
+      if (!_isIosAudioSessionError(e)) rethrow;
     }
     _isSpeaking = false;
   }
@@ -114,11 +99,8 @@ class ElevenLabsTts implements TtsService {
     return response.bodyBytes;
   }
 
-  Future<void> _playBytes(Uint8List bytes) async {
-    // Write to temp file and play
+  Future<void> _playBytes(AudioPlayer initialPlayer, Uint8List bytes) async {
     final dir = await getTemporaryDirectory();
-
-    // Ensure cache/temp directory exists in sandboxed macOS app container
     final outDir = Directory(dir.path);
     if (!await outDir.exists()) {
       await outDir.create(recursive: true);
@@ -127,45 +109,40 @@ class ElevenLabsTts implements TtsService {
     final file = File(
       '${outDir.path}/ocvoice_tts_${DateTime.now().millisecondsSinceEpoch}.mp3',
     );
-
     await file.create(recursive: true);
     await file.writeAsBytes(bytes, flush: true);
 
+    var player = initialPlayer;
+
     Future<void> playOnce() async {
-      await _player.setFilePath(file.path);
-      // Subscribe BEFORE play() to avoid race condition on short audio.
-      // Also accept idle: when stopped externally (e.g. barge-in fadeAndStop),
-      // just_audio transitions to idle not completed — without this the future
-      // would hang forever and block the voice turn pipeline.
-      final completion = _player.processingStateStream.firstWhere(
+      await player.setFilePath(file.path);
+      final completion = player.processingStateStream.firstWhere(
         (s) => s == ProcessingState.completed || s == ProcessingState.idle,
       );
-      await _player.play();
+      await player.play();
       await completion;
     }
 
     try {
       await playOnce();
     } on PlatformException catch (e) {
-      // iOS can occasionally leave AVAudioSession/player in a bad state after
-      // sleep/background transitions. Recreate player and retry once.
       if (_isIosAudioSessionError(e)) {
+        // One hard reset+retry per utterance.
         await _resetPlayer();
+        player = _player!;
         await playOnce();
       } else {
         rethrow;
       }
+    } finally {
+      try {
+        await file.delete();
+      } catch (_) {}
     }
-
-    // Clean up temp file
-    try {
-      await file.delete();
-    } catch (_) {}
   }
 
-  /// Safely JSON-encode a string value.
   String _jsonString(String s) {
-    return '"${s.replaceAll(r'\', r'\\').replaceAll('"', r'\"').replaceAll('\n', r'\n')}"';
+    return '"${s.replaceAll(r'\\', r'\\\\').replaceAll('"', r'\\"').replaceAll('\n', r'\\n')}"';
   }
 
   bool _isIosAudioSessionError(PlatformException e) {
@@ -175,14 +152,17 @@ class ElevenLabsTts implements TtsService {
   }
 
   Future<void> _resetPlayer() async {
-    try {
-      await _player.dispose();
-    } catch (_) {}
+    final old = _player;
     _player = AudioPlayer();
+    if (old != null) {
+      try {
+        await old.dispose();
+      } catch (_) {}
+    }
   }
 
   @override
   void dispose() {
-    _player.dispose();
+    _player?.dispose();
   }
 }
