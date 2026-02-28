@@ -20,3 +20,4 @@ build/
 # API Keys — never commit these
 *secrets*
 *keychain*
+discord-voice-bot/node_modules
